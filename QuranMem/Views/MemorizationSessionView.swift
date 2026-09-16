@@ -8,6 +8,7 @@ struct MemorizationSessionView: View {
     @State private var selectedRating: PerformanceRating?
     @State private var notes = ""
     @State private var isSubmitting = false
+    @AppStorage(SchedulingPreferences.adjustForRatingKey) private var adjustForRating = SchedulingPreferences.default.adjustForRating
     
     var body: some View {
         NavigationView {
@@ -99,6 +100,25 @@ struct MemorizationSessionView: View {
                     }
                 }
             }
+            
+            if adjustForRating {
+                Text(ratingScheduleHint)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+    
+    private var ratingScheduleHint: String {
+        switch selectedRating {
+        case .veryPoor:
+            return "This review will come back tomorrow."
+        case .poor where schedule.frequency == .daily:
+            return "This review will come back tomorrow."
+        case .poor:
+            return "This review will come back sooner than usual, after about half the normal interval."
+        default:
+            return "Poor or Very Poor ratings bring the review back sooner."
         }
     }
     
@@ -125,7 +145,8 @@ struct MemorizationSessionView: View {
         isSubmitting = true
         
         Task {
-            await onComplete(rating, notes.isEmpty ? nil : notes)
+            let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            await onComplete(rating, trimmedNotes.isEmpty ? nil : trimmedNotes)
             isPresented = false
         }
     }
@@ -140,7 +161,7 @@ struct RatingButton: View {
         Button(action: onTap) {
             HStack(spacing: 16) {
                 Circle()
-                    .fill(ratingColor)
+                    .fill(rating.color)
                     .frame(width: 44, height: 44)
                     .overlay(
                         Text("\(rating.stars)")
@@ -165,24 +186,14 @@ struct RatingButton: View {
                 starsView
             }
             .padding()
-            .background(isSelected ? ratingColor.opacity(0.1) : Color(.systemBackground))
+            .background(isSelected ? rating.color.opacity(0.1) : Color(.systemBackground))
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? ratingColor : Color(.systemGray4), lineWidth: isSelected ? 2 : 1)
+                    .stroke(isSelected ? rating.color : Color(.systemGray4), lineWidth: isSelected ? 2 : 1)
             )
         }
         .buttonStyle(PlainButtonStyle())
-    }
-    
-    private var ratingColor: Color {
-        switch rating {
-        case .perfect: return .green
-        case .veryGood: return .blue
-        case .good: return .yellow
-        case .poor: return .orange
-        case .veryPoor: return .red
-        }
     }
     
     private var starsView: some View {

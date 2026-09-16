@@ -2,11 +2,12 @@ import SwiftUI
 
 struct SettingsView: View {
     @StateObject private var viewModel = SettingsViewModel()
-    @EnvironmentObject var notificationManager: NotificationManager
     @AppStorage("colorScheme") private var colorSchemeString: String = ColorSchemeOption.system.rawValue
+    @AppStorage(SchedulingPreferences.adjustForRatingKey) private var adjustForRating = SchedulingPreferences.default.adjustForRating
+    @AppStorage(SchedulingPreferences.overduePolicyKey) private var overduePolicyRaw = SchedulingPreferences.default.overduePolicy.rawValue
     
-    private var colorSchemeOption: ColorSchemeOption {
-        ColorSchemeOption(rawValue: colorSchemeString) ?? .system
+    private var overduePolicy: OverduePolicy {
+        OverduePolicy(rawValue: overduePolicyRaw) ?? SchedulingPreferences.default.overduePolicy
     }
     
     var body: some View {
@@ -14,19 +15,16 @@ struct SettingsView: View {
             List {
                 appearanceSection
                 notificationsSection
+                schedulingSection
                 dataManagementSection
                 aboutSection
+            }
+            .navigationTitle("Settings")
         }
-        .navigationTitle("Settings")
+        .task {
+            await viewModel.loadSettings()
         }
-    }
-    
-    private var preferredColorScheme: ColorScheme? {
-        switch colorSchemeOption {
-        case .system: return nil
-        case .light: return .light
-        case .dark: return .dark
-        }
+        .errorAlert($viewModel.error)
     }
     
     private var appearanceSection: some View {
@@ -48,12 +46,8 @@ struct SettingsView: View {
             Toggle("Daily Reminders", isOn: Binding(
                 get: { viewModel.notificationsEnabled },
                 set: { newValue in
-                    viewModel.notificationsEnabled = newValue
-                    if newValue && !notificationManager.isAuthorized {
-                        viewModel.requestNotificationPermission()
-                    }
                     Task {
-                        await viewModel.toggleNotifications()
+                        await viewModel.setNotificationsEnabled(newValue)
                     }
                 }
             ))
@@ -73,7 +67,29 @@ struct SettingsView: View {
         } header: {
             Text("Notifications")
         } footer: {
-            Text("Receive daily reminders to review your Quran memorization")
+            Text("Get a reminder listing the reviews due that day. Days with nothing due are skipped.")
+        }
+    }
+    
+    private var schedulingSection: some View {
+        Section {
+            Toggle("Adjust for Performance", isOn: $adjustForRating)
+                .tint(.islamicGreen)
+            
+            Picker("Overdue Reviews", selection: $overduePolicyRaw) {
+                ForEach(OverduePolicy.allCases, id: \.self) { policy in
+                    Text(policy.displayName).tag(policy.rawValue)
+                }
+            }
+        } header: {
+            Text("Scheduling")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(adjustForRating
+                     ? "A Poor rating brings a review back after about half its usual interval, and Very Poor makes it due tomorrow."
+                     : "Reviews always follow their frequency, whatever the rating.")
+                Text(overduePolicy.description)
+            }
         }
     }
     
@@ -118,16 +134,6 @@ struct SettingsView: View {
                 Spacer()
                 Text(viewModel.buildNumber)
                     .foregroundColor(.secondary)
-            }
-            
-            Link(destination: URL(string: "https://quranmem.app")!) {
-                HStack {
-                    Text("Website")
-                    Spacer()
-                    Image(systemName: "arrow.up.forward")
-                        .font(.caption)
-                        .foregroundColor(.islamicGreen)
-                }
             }
         } header: {
             Text("About")

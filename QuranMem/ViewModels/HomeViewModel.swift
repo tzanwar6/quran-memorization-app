@@ -7,12 +7,15 @@ class HomeViewModel: ObservableObject {
     @Published var todaySchedules: [ScheduleWithSurah] = []
     @Published var calendarSchedules: [Date: [ScheduleWithSurah]] = [:]
     @Published var isLoading = false
+    @Published private(set) var hasLoaded = false
     @Published var error: String?
+    /// The most recently completed session, while it can still be undone.
+    @Published var lastCompleted: CompletedSession?
     
     private let dataStore: DataStore
     private let notificationManager: NotificationManager
     
-    init(dataStore: DataStore = DataStore(), notificationManager: NotificationManager = NotificationManager()) {
+    init(dataStore: DataStore = DataStore(), notificationManager: NotificationManager = .shared) {
         self.dataStore = dataStore
         self.notificationManager = notificationManager
     }
@@ -40,6 +43,7 @@ class HomeViewModel: ObservableObject {
         }
         
         isLoading = false
+        hasLoaded = true
     }
     
     private func calculateCalendarSchedules(schedules: [ScheduleWithSurah]) -> [Date: [ScheduleWithSurah]] {
@@ -111,7 +115,7 @@ class HomeViewModel: ObservableObject {
     
     func completeSession(scheduleId: UUID, performanceRating: PerformanceRating, notes: String?) async {
         do {
-            try await dataStore.createSession(
+            lastCompleted = try await dataStore.createSession(
                 scheduleId: scheduleId,
                 performanceRating: performanceRating,
                 notes: notes
@@ -122,10 +126,26 @@ class HomeViewModel: ObservableObject {
         }
     }
     
+    func undoLastSession() async {
+        guard let completed = lastCompleted else { return }
+        lastCompleted = nil
+        
+        do {
+            try await dataStore.undoSession(completed)
+            await loadData()
+        } catch {
+            self.error = "Failed to undo session: \(error.localizedDescription)"
+        }
+    }
+    
+    func dismissUndo(for completed: CompletedSession) {
+        if lastCompleted == completed {
+            lastCompleted = nil
+        }
+    }
+    
     private func updateBadgeCount() {
         let count = todaySchedules.filter { $0.isDueToday }.count
-        Task {
-            await notificationManager.updateBadgeCount(count)
-        }
+        notificationManager.updateBadgeCount(count)
     }
 }

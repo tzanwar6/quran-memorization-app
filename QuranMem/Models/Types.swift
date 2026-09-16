@@ -76,14 +76,47 @@ enum PerformanceRating: String, CaseIterable, Codable {
         Double(stars)
     }
     
-    var color: String {
+    /// Whether this rating means the passage needs to come back sooner than planned.
+    var needsEarlierReview: Bool {
+        self == .poor || self == .veryPoor
+    }
+}
+
+enum OverduePolicy: String, CaseIterable, Codable {
+    /// Skip the missed occurrences and stay on the original rhythm (e.g. same weekday).
+    case keepRhythm = "keep_rhythm"
+    /// Count the next interval from the day the overdue review is completed.
+    case restartFromCompletion = "restart_from_completion"
+    
+    var displayName: String {
         switch self {
-        case .perfect: return "green"
-        case .veryGood: return "blue"
-        case .good: return "yellow"
-        case .poor: return "orange"
-        case .veryPoor: return "red"
+        case .keepRhythm: return "Keep Rhythm"
+        case .restartFromCompletion: return "Restart From Today"
         }
+    }
+    
+    var description: String {
+        switch self {
+        case .keepRhythm: return "Overdue reviews move to their next regular date, e.g. the same weekday."
+        case .restartFromCompletion: return "Overdue reviews count the next interval from the day you complete them."
+        }
+    }
+}
+
+struct SchedulingPreferences: Equatable {
+    static let adjustForRatingKey = "adjustScheduleForRating"
+    static let overduePolicyKey = "overduePolicy"
+    
+    var adjustForRating: Bool
+    var overduePolicy: OverduePolicy
+    
+    static let `default` = SchedulingPreferences(adjustForRating: true, overduePolicy: .keepRhythm)
+    
+    static func load(from defaults: UserDefaults = .standard) -> SchedulingPreferences {
+        let adjustForRating = defaults.object(forKey: adjustForRatingKey) as? Bool ?? Self.default.adjustForRating
+        let overduePolicy = defaults.string(forKey: overduePolicyKey).flatMap(OverduePolicy.init(rawValue:))
+            ?? Self.default.overduePolicy
+        return SchedulingPreferences(adjustForRating: adjustForRating, overduePolicy: overduePolicy)
     }
 }
 
@@ -117,7 +150,7 @@ struct ScheduleWithSurah: Identifiable, Equatable {
     }
 }
 
-struct SessionWithSchedule: Identifiable {
+struct SessionWithSchedule: Identifiable, Equatable {
     let id: UUID
     let scheduleId: UUID
     let surahArabicName: String
@@ -126,6 +159,15 @@ struct SessionWithSchedule: Identifiable {
     let completedAt: Date
     let notes: String?
     let frequency: Frequency
+}
+
+/// What's needed to undo a just-completed session, including the schedule's due date before it.
+struct CompletedSession: Equatable {
+    let sessionId: UUID
+    let scheduleId: UUID
+    let surahEnglishName: String
+    let previousDueDate: Date
+    let nextDueDate: Date
 }
 
 struct UserStatistics {

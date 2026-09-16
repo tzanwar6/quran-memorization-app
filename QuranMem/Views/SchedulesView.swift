@@ -10,7 +10,11 @@ struct SchedulesView: View {
     var body: some View {
         NavigationView {
             List {
-                if viewModel.schedules.isEmpty {
+                if viewModel.schedules.isEmpty && !viewModel.hasLoaded {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                } else if viewModel.schedules.isEmpty {
                     emptyStateView
                 } else {
                     ForEach(viewModel.schedules) { schedule in
@@ -43,7 +47,7 @@ struct SchedulesView: View {
                 await viewModel.loadData()
             }
         }
-        .onChange(of: showingSurahSelection) { isShowing in
+        .onChange(of: showingSurahSelection) { _, isShowing in
             if !isShowing {
                 // Refresh data when modal is dismissed
                 Task {
@@ -51,7 +55,7 @@ struct SchedulesView: View {
                 }
             }
         }
-        .onChange(of: scheduleToEdit) { schedule in
+        .onChange(of: scheduleToEdit) { _, schedule in
             if schedule == nil {
                 // Refresh data when edit modal is dismissed
                 Task {
@@ -94,7 +98,20 @@ struct SchedulesView: View {
                 }
             }
         } message: { schedule in
-            Text("Are you sure you want to delete the schedule for \(schedule.surahEnglishName)?")
+            Text(deleteMessage(for: schedule))
+        }
+        .errorAlert($viewModel.error)
+    }
+    
+    private func deleteMessage(for schedule: ScheduleWithSurah) -> String {
+        let question = "Are you sure you want to delete the schedule for \(schedule.surahEnglishName)?"
+        switch viewModel.sessionCount(scheduleId: schedule.id) {
+        case 0:
+            return question
+        case 1:
+            return question + " Its 1 completed session will also be removed from your history and stats."
+        case let count:
+            return question + " Its \(count) completed sessions will also be removed from your history and stats."
         }
     }
     
@@ -182,14 +199,14 @@ struct ScheduleListRow: View {
 
 struct EditFrequencyView: View {
     let schedule: ScheduleWithSurah
-    let onSave: (Frequency, Date?) async -> Void
+    let onSave: (Frequency?, Date?) async -> Void
     @Environment(\.dismiss) private var dismiss
     
     @State private var selectedFrequency: Frequency
     @State private var selectedDate: Date
     @State private var shouldUpdateDate: Bool = false
     
-    init(schedule: ScheduleWithSurah, onSave: @escaping (Frequency, Date?) async -> Void) {
+    init(schedule: ScheduleWithSurah, onSave: @escaping (Frequency?, Date?) async -> Void) {
         self.schedule = schedule
         self.onSave = onSave
         self._selectedFrequency = State(initialValue: schedule.frequency)
@@ -285,7 +302,13 @@ struct EditFrequencyView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         Task {
-                            await onSave(selectedFrequency, shouldUpdateDate ? selectedDate : nil)
+                            // Pass only what changed; resending the same frequency would
+                            // recalculate the due date and silently postpone the review.
+                            let newFrequency = selectedFrequency == schedule.frequency ? nil : selectedFrequency
+                            let newDate = shouldUpdateDate ? selectedDate : nil
+                            if newFrequency != nil || newDate != nil {
+                                await onSave(newFrequency, newDate)
+                            }
                             dismiss()
                         }
                     }

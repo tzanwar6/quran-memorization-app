@@ -44,7 +44,7 @@
   { "id": 43, "arabicName": "الزخرف", "englishName": "Az-Zukhruf", "transliteration": "Az-Zukhruf", "verseCount": 89, "pageStart": 489, "pageEnd": 496, "revelation": "meccan" },
   { "id": 44, "arabicName": "الدخان", "englishName": "Ad-Dukhan", "transliteration": "Ad-Dukhan", "verseCount": 59, "pageStart": 496, "pageEnd": 499, "revelation": "meccan" },
   { "id": 45, "arabicName": "الجاثية", "englishName": "Al-Jathiyah", "transliteration": "Al-Jathiyah", "verseCount": 37, "pageStart": 499, "pageEnd": 502, "revelation": "meccan" },
-  { "id": 46, "arabicName": "الأحقاف", "englishName": "Al-Ahqaf", "transliteration": "Al-Ahqaf", "verseCount": 35, "pageStart": 502, "pageEnd": 505, "revelation": "meccan" },
+  { "id": 46, "arabicName": "الأحقاف", "englishName": "Al-Ahqaf", "transliteration": "Al-Ahqaf", "verseCount": 35, "pageStart": 502, "pageEnd": 506, "revelation": "meccan" },
   { "id": 47, "arabicName": "محمد", "englishName": "Muhammad", "transliteration": "Muhammad", "verseCount": 38, "pageStart": 507, "pageEnd": 511, "revelation": "medinan" },
   { "id": 48, "arabicName": "الفتح", "englishName": "Al-Fath", "transliteration": "Al-Fath", "verseCount": 29, "pageStart": 511, "pageEnd": 515, "revelation": "medinan" },
   { "id": 49, "arabicName": "الحجرات", "englishName": "Al-Hujurat", "transliteration": "Al-Hujurat", "verseCount": 18, "pageStart": 515, "pageEnd": 517, "revelation": "medinan" },

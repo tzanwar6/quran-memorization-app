@@ -41,7 +41,26 @@ struct HomeView: View {
                 }
             }
         }
-        .onChange(of: showSessionModal) { isShowing in
+        .overlay(alignment: .bottom) {
+            if let completed = viewModel.lastCompleted {
+                UndoBanner(completed: completed) {
+                    Task {
+                        await viewModel.undoLastSession()
+                    }
+                }
+                .padding()
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task(id: completed.sessionId) {
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    withAnimation {
+                        viewModel.dismissUndo(for: completed)
+                    }
+                }
+            }
+        }
+        .animation(.easeInOut, value: viewModel.lastCompleted)
+        .errorAlert($viewModel.error)
+        .onChange(of: showSessionModal) { _, isShowing in
             if !isShowing {
                 // Refresh data when modal is dismissed
                 Task {
@@ -57,7 +76,11 @@ struct HomeView: View {
                 .font(.headline)
                 .foregroundColor(.primary)
             
-            if viewModel.todaySchedules.isEmpty {
+            if viewModel.todaySchedules.isEmpty && !viewModel.hasLoaded {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 32)
+            } else if viewModel.todaySchedules.isEmpty {
                 emptyStateView
             } else {
                 ForEach(viewModel.todaySchedules) { schedule in
@@ -123,10 +146,16 @@ struct CalendarView: View {
     }
     
     private var startDate: Date {
-        // Start from the beginning of the week containing today
+        // Start from the beginning of the week containing today, using the region's first weekday
         let weekday = calendar.component(.weekday, from: today)
-        let daysFromSunday = (weekday - 1) % 7
-        return calendar.date(byAdding: .day, value: -daysFromSunday, to: today) ?? today
+        let daysFromWeekStart = (weekday - calendar.firstWeekday + 7) % 7
+        return calendar.date(byAdding: .day, value: -daysFromWeekStart, to: today) ?? today
+    }
+    
+    private var weekdaySymbols: [String] {
+        let symbols = calendar.shortWeekdaySymbols
+        let firstIndex = calendar.firstWeekday - 1
+        return Array(symbols[firstIndex...] + symbols[..<firstIndex])
     }
     
     private var endDate: Date {
@@ -148,7 +177,7 @@ struct CalendarView: View {
         VStack(spacing: 0) {
             // Week day headers
             HStack(spacing: 0) {
-                ForEach(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], id: \.self) { day in
+                ForEach(weekdaySymbols, id: \.self) { day in
                     Text(day)
                         .font(.caption)
                         .fontWeight(.semibold)
@@ -415,3 +444,34 @@ struct ScheduleTaskCard: View {
     }
 }
 
+struct UndoBanner: View {
+    let completed: CompletedSession
+    let onUndo: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.islamicGreen)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(completed.surahEnglishName) completed")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text("Next review \(completed.nextDueDate.formatted(.dateTime.weekday(.wide).month().day()))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Button("Undo", action: onUndo)
+                .fontWeight(.semibold)
+                .foregroundColor(.islamicGreen)
+        }
+        .padding()
+        .background(.regularMaterial)
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+    }
+}

@@ -17,7 +17,8 @@ enum ColorSchemeOption: String, CaseIterable {
 @main
 struct QuranMemApp: App {
     let persistenceController = PersistenceController.shared
-    @StateObject private var notificationManager = NotificationManager()
+    @StateObject private var notificationManager = NotificationManager.shared
+    @Environment(\.scenePhase) private var scenePhase
     
     init() {
         setupAppearance()
@@ -28,10 +29,19 @@ struct QuranMemApp: App {
             ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .environmentObject(notificationManager)
-                .onAppear {
-                    notificationManager.requestAuthorization()
+                .task {
+                    do {
+                        try await DataStore().removeOrphanedSessions()
+                    } catch {
+                        print("Error removing orphaned sessions: \(error)")
+                    }
+                }
+                .onChange(of: scenePhase, initial: true) { _, phase in
+                    // Reminders are planned from today's date, so rebuild them whenever the app
+                    // comes to the foreground. Respects the saved on/off setting and reminder time.
+                    guard phase == .active else { return }
                     Task {
-                        await notificationManager.scheduleDailyReminder()
+                        await notificationManager.refreshDailyReminder()
                     }
                 }
         }
@@ -70,7 +80,7 @@ struct ContentView: View {
                     Label("Schedules", systemImage: "calendar")
                 }
             
-            ProgressView()
+            ProgressTabView()
                 .tabItem {
                     Label("Progress", systemImage: "chart.bar.fill")
                 }

@@ -7,6 +7,7 @@ class SchedulesViewModel: ObservableObject {
     @Published var schedules: [ScheduleWithSurah] = []
     @Published var surahs: [Surah] = []
     @Published var isLoading = false
+    @Published private(set) var hasLoaded = false
     @Published var error: String?
     @Published var showSurahSelection = false
     
@@ -34,6 +35,7 @@ class SchedulesViewModel: ObservableObject {
         }
         
         isLoading = false
+        hasLoaded = true
     }
     
     func createSchedule(
@@ -78,6 +80,10 @@ class SchedulesViewModel: ObservableObject {
         } catch {
             self.error = "Failed to delete schedule: \(error.localizedDescription)"
         }
+    }
+    
+    func sessionCount(scheduleId: UUID) -> Int {
+        (try? dataStore.sessionCount(scheduleId: scheduleId)) ?? 0
     }
     
     func toggleScheduleActive(id: UUID, currentState: Bool) async {
