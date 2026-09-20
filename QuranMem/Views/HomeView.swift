@@ -3,9 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
     @State private var selectedSchedule: ScheduleWithSurah?
-    @State private var showSessionModal = false
-    @State private var selectedDate: Date?
-    @State private var showDateDetail = false
+    @State private var selectedDay: CalendarDaySelection?
     
     var body: some View {
         NavigationView {
@@ -25,20 +23,15 @@ struct HomeView: View {
                 await viewModel.loadData()
             }
         }
-        .sheet(isPresented: $showSessionModal) {
-            if let schedule = selectedSchedule {
-                MemorizationSessionView(
-                    schedule: schedule,
-                    isPresented: $showSessionModal
-                ) { rating, notes in
-                    await viewModel.completeSession(
-                        scheduleId: schedule.id,
-                        performanceRating: rating,
-                        notes: notes
-                    )
-                    showSessionModal = false
-                    selectedSchedule = nil
-                }
+        // sheet(item:) rather than sheet(isPresented:): the content of an isPresented sheet can be
+        // built before the accompanying state lands, which shows an empty sheet the first time.
+        .sheet(item: $selectedSchedule) { schedule in
+            MemorizationSessionView(schedule: schedule) { rating, notes in
+                await viewModel.completeSession(
+                    scheduleId: schedule.id,
+                    performanceRating: rating,
+                    notes: notes
+                )
             }
         }
         .overlay(alignment: .bottom) {
@@ -60,8 +53,8 @@ struct HomeView: View {
         }
         .animation(.easeInOut, value: viewModel.lastCompleted)
         .errorAlert($viewModel.error)
-        .onChange(of: showSessionModal) { _, isShowing in
-            if !isShowing {
+        .onChange(of: selectedSchedule) { _, schedule in
+            if schedule == nil {
                 // Refresh data when modal is dismissed
                 Task {
                     await viewModel.loadData()
@@ -86,7 +79,6 @@ struct HomeView: View {
                 ForEach(viewModel.todaySchedules) { schedule in
                     ScheduleTaskCard(schedule: schedule) {
                         selectedSchedule = schedule
-                        showSessionModal = true
                     }
                 }
             }
@@ -102,18 +94,15 @@ struct HomeView: View {
             CalendarView(
                 schedules: viewModel.calendarSchedules,
                 onDateTap: { date in
-                    selectedDate = date
-                    showDateDetail = true
+                    selectedDay = CalendarDaySelection(date: date)
                 }
             )
         }
-        .sheet(isPresented: $showDateDetail) {
-            if let date = selectedDate {
-                DateDetailView(
-                    date: date,
-                    schedules: viewModel.calendarSchedules[date] ?? []
-                )
-            }
+        .sheet(item: $selectedDay) { day in
+            DateDetailView(
+                date: day.date,
+                schedules: viewModel.calendarSchedules[day.date] ?? []
+            )
         }
     }
     
@@ -134,6 +123,12 @@ struct HomeView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
     }
+}
+
+/// Wraps the tapped day so the sheet receives the date as its item.
+struct CalendarDaySelection: Identifiable {
+    let date: Date
+    var id: Date { date }
 }
 
 struct CalendarView: View {

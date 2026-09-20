@@ -2,8 +2,9 @@ import SwiftUI
 
 struct MemorizationSessionView: View {
     let schedule: ScheduleWithSurah
-    @Binding var isPresented: Bool
     let onComplete: (PerformanceRating, String?) async -> Void
+    
+    @Environment(\.dismiss) private var dismiss
     
     @State private var selectedRating: PerformanceRating?
     @State private var notes = ""
@@ -25,7 +26,7 @@ struct MemorizationSessionView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
-                        isPresented = false
+                        dismiss()
                     }
                     .disabled(isSubmitting)
                 }
@@ -147,7 +148,7 @@ struct MemorizationSessionView: View {
         Task {
             let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
             await onComplete(rating, trimmedNotes.isEmpty ? nil : trimmedNotes)
-            isPresented = false
+            dismiss()
         }
     }
 }
