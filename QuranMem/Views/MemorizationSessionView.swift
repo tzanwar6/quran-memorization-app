@@ -3,95 +3,100 @@ import SwiftUI
 struct MemorizationSessionView: View {
     let schedule: ScheduleWithSurah
     let onComplete: (PerformanceRating, String?) async -> Void
-    
+
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var selectedRating: PerformanceRating?
     @State private var notes = ""
     @State private var isSubmitting = false
     @AppStorage(SchedulingPreferences.adjustForRatingKey) private var adjustForRating = SchedulingPreferences.default.adjustForRating
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(spacing: Metrics.section) {
                     scheduleInfoCard
                     performanceRatingSection
                     notesSection
                 }
-                .padding()
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.vertical, Metrics.card)
             }
+            .background(Color.appCanvas)
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Complete Session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .disabled(isSubmitting)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .disabled(isSubmitting)
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Complete") {
-                        submitSession()
-                    }
-                    .disabled(selectedRating == nil || isSubmitting)
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Complete") { submitSession() }
+                        .fontWeight(.semibold)
+                        .disabled(selectedRating == nil || isSubmitting)
                 }
             }
         }
+        // A light tick per rating change, the way a picker detent behaves.
+        .sensoryFeedback(.selection, trigger: selectedRating)
     }
-    
+
     private var scheduleInfoCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.card) {
+            HStack(spacing: Metrics.card) {
                 Image(systemName: "book.fill")
-                    .font(.title2)
-                    .foregroundColor(.islamicGreen)
-                    .frame(width: 44, height: 44)
-                    .background(Color.islamicGreen.opacity(0.1))
-                    .clipShape(Circle())
-                
-                VStack(alignment: .leading, spacing: 4) {
+                    .font(.title3)
+                    .foregroundStyle(Color.islamicGreen)
+                    .frame(width: Metrics.minTarget, height: Metrics.minTarget)
+                    .background(Color.islamicGreen.opacity(0.12), in: .circle)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
                     Text(schedule.surahArabicName)
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                    
+                        .font(.title3.weight(.semibold))
+
                     Text(schedule.surahEnglishName)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
+
             Divider()
-            
-            HStack {
-                Label(
-                    schedule.isFullSurah ?
-                    "Full Surah (\(schedule.verseCount) verses)" :
-                    "Pages \(schedule.startPage ?? 0)-\(schedule.endPage ?? 0)",
-                    systemImage: "doc.text"
-                )
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Label(schedule.frequency.displayName, systemImage: "calendar")
-                    .font(.subheadline)
-                    .foregroundColor(.islamicGreen)
+
+            ViewThatFits(in: .horizontal) {
+                HStack { scopeLabels }
+                VStack(alignment: .leading, spacing: 6) { scopeLabels }
             }
+            .font(.subheadline)
         }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
+        .padding(Metrics.gutter)
+        .cardSurface()
     }
-    
+
+    @ViewBuilder
+    private var scopeLabels: some View {
+        Label(
+            schedule.isFullSurah
+                ? "Full Surah (\(schedule.verseCount) verses)"
+                : "Pages \(schedule.startPage ?? 0)–\(schedule.endPage ?? 0)",
+            systemImage: "doc.text"
+        )
+        .foregroundStyle(.secondary)
+
+        Spacer(minLength: 0)
+
+        Label(schedule.frequency.displayName, systemImage: "calendar")
+            .foregroundStyle(Color.islamicGreen)
+    }
+
     private var performanceRatingSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("How did you perform?")
-                .font(.headline)
-            
-            VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.card) {
+            SectionHeader(title: "How did it go?")
+
+            VStack(spacing: 8) {
                 ForEach(PerformanceRating.allCases, id: \.self) { rating in
                     RatingButton(
                         rating: rating,
@@ -101,15 +106,16 @@ struct MemorizationSessionView: View {
                     }
                 }
             }
-            
+
             if adjustForRating {
                 Text(ratingScheduleHint)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .animation(.smooth(duration: 0.25), value: selectedRating)
             }
         }
     }
-    
+
     private var ratingScheduleHint: String {
         switch selectedRating {
         case .veryPoor:
@@ -122,29 +128,20 @@ struct MemorizationSessionView: View {
             return "Poor or Very Poor ratings bring the review back sooner."
         }
     }
-    
+
     private var notesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Notes (Optional)")
-                .font(.headline)
-            
-            TextEditor(text: $notes)
-                .frame(height: 100)
-                .padding(8)
-                .background(Color(.systemGray6))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(.systemGray4), lineWidth: 1)
-                )
+        VStack(alignment: .leading, spacing: Metrics.card) {
+            SectionHeader(title: "Notes")
+
+            NotesEditor(text: $notes, placeholder: "Anything worth remembering for next time")
         }
     }
-    
+
     private func submitSession() {
         guard let rating = selectedRating else { return }
-        
+
         isSubmitting = true
-        
+
         Task {
             let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
             await onComplete(rating, trimmedNotes.isEmpty ? nil : trimmedNotes)
@@ -153,57 +150,82 @@ struct MemorizationSessionView: View {
     }
 }
 
+/// A text area that matches the surrounding card surfaces and shows a prompt
+/// while it's empty, which a bare TextEditor doesn't do.
+struct NotesEditor: View {
+    @Binding var text: String
+    let placeholder: String
+
+    var body: some View {
+        TextEditor(text: $text)
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: 110)
+            .padding(10)
+            .background(Color.appCard, in: .rect(cornerRadius: Metrics.controlRadius, style: .continuous))
+            .overlay(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 18)
+                        .allowsHitTesting(false)
+                }
+            }
+            .accessibilityLabel("Notes")
+    }
+}
+
 struct RatingButton: View {
     let rating: PerformanceRating
     let isSelected: Bool
     let onTap: () -> Void
-    
+
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 16) {
+            HStack(spacing: Metrics.card) {
                 Circle()
                     .fill(rating.color)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                     .overlay(
                         Text("\(rating.stars)")
-                            .font(.headline)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Color(.systemBackground))
                     )
-                
-                VStack(alignment: .leading, spacing: 4) {
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
                     Text(rating.displayName)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.primary)
-                    
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+
                     Text(rating.description)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
-                
-                Spacer()
-                
-                starsView
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                StarRatingView(stars: rating.stars, size: .caption)
+                    .accessibilityHidden(true)
             }
-            .padding()
-            .background(isSelected ? rating.color.opacity(0.1) : Color(.systemBackground))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? rating.color : Color(.systemGray4), lineWidth: isSelected ? 2 : 1)
+            .padding(Metrics.card)
+            .frame(minHeight: Metrics.minTarget)
+            .background(
+                isSelected ? rating.color.opacity(0.12) : Color.appCard,
+                in: .rect(cornerRadius: Metrics.controlRadius, style: .continuous)
             )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-    
-    private var starsView: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<5) { index in
-                Image(systemName: index < rating.stars ? "star.fill" : "star")
-                    .font(.caption)
-                    .foregroundColor(index < rating.stars ? .goldAccent : .gray.opacity(0.3))
+            .overlay {
+                RoundedRectangle(cornerRadius: Metrics.controlRadius, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? rating.color : Color(.separator),
+                        lineWidth: isSelected ? 2 : 0.5
+                    )
             }
         }
+        .buttonStyle(.card)
+        .animation(.snappy(duration: 0.25), value: isSelected)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(rating.displayName), \(rating.stars) of 5. \(rating.description)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

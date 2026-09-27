@@ -4,16 +4,10 @@ struct SurahSelectionView: View {
     let surahs: [Surah]
     @Binding var isPresented: Bool
     let onCreate: (Int, Frequency, Bool, Int?, Int?) async -> Void
-    
+
     @State private var searchText = ""
     @State private var selectedSurah: Surah?
-    @State private var frequency: Frequency = .daily
-    @State private var isFullSurah = true
-    @State private var startPage = ""
-    @State private var endPage = ""
-    @State private var showValidationError = false
-    @State private var validationMessage = ""
-    
+
     var filteredSurahs: [Surah] {
         if searchText.isEmpty {
             return surahs
@@ -24,255 +18,206 @@ struct SurahSelectionView: View {
             surah.transliteration.localizedCaseInsensitiveContains(searchText)
         }
     }
-    
+
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 20) {
-                    searchSection
-                    
-                    if selectedSurah == nil {
-                        surahListSection
-                    } else {
-                        configurationSection
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle("Create Schedule")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        isPresented = false
-                    }
-                }
-                
-                if selectedSurah != nil {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Create") {
-                            createSchedule()
+        NavigationStack {
+            Group {
+                if filteredSurahs.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    // A List lazily builds its rows; the previous ScrollView laid
+                    // out all 114 surahs on every keystroke.
+                    List(filteredSurahs) { surah in
+                        Button {
+                            selectedSurah = surah
+                        } label: {
+                            SurahSelectionRow(surah: surah)
                         }
+                        .buttonStyle(.plain)
                     }
+                    .listStyle(.plain)
                 }
             }
-            .alert("Validation Error", isPresented: $showValidationError) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(validationMessage)
+            .navigationTitle("Choose a Surah")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search surahs")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                }
             }
-        }
-    }
-    
-    private var searchSection: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-            
-            TextField("Search Surahs", text: $searchText)
-                .textFieldStyle(.plain)
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
-    }
-    
-    private var surahListSection: some View {
-        VStack(spacing: 8) {
-            ForEach(filteredSurahs) { surah in
-                SurahSelectionRow(surah: surah) {
-                    selectedSurah = surah
+            .navigationDestination(item: $selectedSurah) { surah in
+                ScheduleConfigurationView(surah: surah) { frequency, isFullSurah, startPage, endPage in
+                    await onCreate(surah.id, frequency, isFullSurah, startPage, endPage)
+                    isPresented = false
                 }
             }
         }
     }
-    
-    private var configurationSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            if let surah = selectedSurah {
-                selectedSurahCard(surah)
-                frequencyPicker
-                fullSurahToggle
-                
-                if !isFullSurah {
-                    pageRangeInputs(surah)
-                }
-            }
+}
+
+/// The second step of creating a schedule. Pushed rather than swapped in place so
+/// the back button and the title say where you are.
+struct ScheduleConfigurationView: View {
+    let surah: Surah
+    let onCreate: (Frequency, Bool, Int?, Int?) async -> Void
+
+    @State private var frequency: Frequency = .daily
+    @State private var isFullSurah = true
+    @State private var startPage = ""
+    @State private var endPage = ""
+    @State private var isCreating = false
+
+    /// Reported inline under the fields rather than in an alert after the fact,
+    /// and it also gates the Create button — the error is prevented, not announced.
+    private var validationError: String? {
+        guard !isFullSurah else { return nil }
+        guard let start = Int(startPage), let end = Int(endPage) else {
+            return startPage.isEmpty && endPage.isEmpty ? nil : "Enter both page numbers."
         }
+        guard start >= surah.pageStart, end <= surah.pageEnd else {
+            return "This surah spans pages \(surah.pageStart)–\(surah.pageEnd)."
+        }
+        guard start <= end else {
+            return "The start page must come before the end page."
+        }
+        return nil
     }
-    
-    private func selectedSurahCard(_ surah: Surah) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+
+    private var canCreate: Bool {
+        if isCreating { return false }
+        if isFullSurah { return true }
+        return validationError == nil && Int(startPage) != nil && Int(endPage) != nil
+    }
+
+    var body: some View {
+        Form {
+            Section {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(surah.arabicName)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    
+                        .font(.title2.weight(.semibold))
+
                     Text(surah.englishName)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    HStack(spacing: 12) {
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: Metrics.card) {
                         Label("\(surah.verseCount) verses", systemImage: "book")
                         Label(surah.pageRange, systemImage: "doc.text")
                     }
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
                 }
-                
-                Spacer()
-                
-                Button("Change") {
-                    withAnimation {
-                        selectedSurah = nil
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
+            }
+
+            Section {
+                Picker("Frequency", selection: $frequency) {
+                    ForEach(Frequency.allCases, id: \.self) { freq in
+                        Text(freq.displayName).tag(freq)
                     }
                 }
-                .font(.caption)
+            } header: {
+                Text("Review Frequency")
+            } footer: {
+                Text("How often this passage comes back for review.")
             }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-    
-    private var frequencyPicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Frequency")
-                .font(.headline)
-            
-            Picker("Frequency", selection: $frequency) {
-                ForEach(Frequency.allCases, id: \.self) { freq in
-                    Text(freq.displayName).tag(freq)
+
+            Section {
+                Toggle("Memorize Full Surah", isOn: $isFullSurah.animation(.snappy(duration: 0.3)))
+                    .tint(.islamicGreen)
+
+                if !isFullSurah {
+                    LabeledContent("Start Page") {
+                        TextField("\(surah.pageStart)", text: $startPage)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    LabeledContent("End Page") {
+                        TextField("\(surah.pageEnd)", text: $endPage)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            } header: {
+                Text("Scope")
+            } footer: {
+                if let validationError {
+                    Label(validationError, systemImage: "exclamationmark.circle.fill")
+                        .foregroundStyle(.red)
+                } else if !isFullSurah {
+                    Text("Valid range: \(surah.pageStart)–\(surah.pageEnd).")
                 }
             }
-            .pickerStyle(.segmented)
         }
-    }
-    
-    private var fullSurahToggle: some View {
-        Toggle("Memorize full Surah", isOn: $isFullSurah)
-            .padding()
-            .background(Color(.systemGray6))
-            .cornerRadius(8)
-    }
-    
-    private func pageRangeInputs(_ surah: Surah) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Page Range")
-                .font(.headline)
-            
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Start Page")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    TextField("Start", text: $startPage)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
+        .navigationTitle("New Schedule")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Create") {
+                    isCreating = true
+                    Task {
+                        await onCreate(frequency, isFullSurah, Int(startPage), Int(endPage))
+                    }
                 }
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("End Page")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    TextField("End", text: $endPage)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                }
+                .fontWeight(.semibold)
+                .disabled(!canCreate)
             }
-            
-            Text("Valid range: \(surah.pageStart) - \(surah.pageEnd)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-    }
-    
-    private func createSchedule() {
-        guard let surah = selectedSurah else { return }
-        
-        var startPageInt: Int?
-        var endPageInt: Int?
-        
-        if !isFullSurah {
-            guard let start = Int(startPage), let end = Int(endPage) else {
-                validationMessage = "Please enter valid page numbers"
-                showValidationError = true
-                return
-            }
-            
-            if start < surah.pageStart || end > surah.pageEnd || start > end {
-                validationMessage = "Page range must be between \(surah.pageStart) and \(surah.pageEnd), and start page must be less than or equal to end page"
-                showValidationError = true
-                return
-            }
-            
-            startPageInt = start
-            endPageInt = end
-        }
-        
-        Task {
-            await onCreate(surah.id, frequency, isFullSurah, startPageInt, endPageInt)
-            isPresented = false
         }
     }
 }
 
 struct SurahSelectionRow: View {
     let surah: Surah
-    let onSelect: () -> Void
-    
+
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(Color.islamicGreen.opacity(0.1))
-                    .frame(width: 40, height: 40)
-                    .overlay(
-                        Text("\(surah.id)")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.islamicGreen)
-                    )
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(surah.arabicName)
-                            .font(.headline)
-                        
-                        Spacer()
-                        
-                        Text(surah.revelation.capitalized)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(Color(.systemGray5))
-                            .cornerRadius(4)
-                    }
-                    
-                    Text(surah.englishName)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    HStack(spacing: 12) {
-                        Label("\(surah.verseCount) verses", systemImage: "book")
-                        Label(surah.pageRange, systemImage: "doc.text")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+        HStack(spacing: Metrics.card) {
+            Text("\(surah.id)")
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(Color.islamicGreen)
+                .frame(width: 38, height: 38)
+                .background(Color.islamicGreen.opacity(0.12), in: .circle)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(surah.arabicName)
+                        .font(.headline)
+
+                    Spacer(minLength: 8)
+
+                    Text(surah.revelation.capitalized)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color(.tertiarySystemFill), in: .capsule)
                 }
-                
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+
+                Text(surah.englishName)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: Metrics.card) {
+                    Label("\(surah.verseCount) verses", systemImage: "book")
+                    Label(surah.pageRange, systemImage: "doc.text")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 1)
             }
-            .padding()
-            .background(Color(.systemBackground))
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(0.05), radius: 2)
+
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.vertical, 6)
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
     }
 }

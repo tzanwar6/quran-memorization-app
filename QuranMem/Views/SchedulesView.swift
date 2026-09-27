@@ -6,37 +6,48 @@ struct SchedulesView: View {
     @State private var scheduleToDelete: ScheduleWithSurah?
     @State private var showDeleteConfirmation = false
     @State private var scheduleToEdit: ScheduleWithSurah?
-    
+
     var body: some View {
-        NavigationView {
-            List {
+        NavigationStack {
+            Group {
                 if viewModel.schedules.isEmpty && !viewModel.hasLoaded {
                     ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if viewModel.schedules.isEmpty {
-                    emptyStateView
+                    ContentUnavailableView {
+                        Label("No Schedules Yet", systemImage: "calendar.badge.plus")
+                    } description: {
+                        Text("Add a surah to start a review rhythm.")
+                    } actions: {
+                        Button("Create Schedule") { showingSurahSelection = true }
+                            .buttonStyle(.borderedProminent)
+                    }
                 } else {
-                    ForEach(viewModel.schedules) { schedule in
-                        ScheduleListRow(schedule: schedule) {
-                            await viewModel.toggleScheduleActive(
-                                id: schedule.id,
-                                currentState: schedule.isActive
-                            )
-                        } onEdit: {
-                            scheduleToEdit = schedule
-                        } onDelete: {
-                            scheduleToDelete = schedule
-                            showDeleteConfirmation = true
+                    List {
+                        ForEach(viewModel.schedules) { schedule in
+                            ScheduleListRow(schedule: schedule) {
+                                await viewModel.toggleScheduleActive(
+                                    id: schedule.id,
+                                    currentState: schedule.isActive
+                                )
+                            } onEdit: {
+                                scheduleToEdit = schedule
+                            } onDelete: {
+                                scheduleToDelete = schedule
+                                showDeleteConfirmation = true
+                            }
                         }
                     }
+                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("Schedules")
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingSurahSelection = true }) {
-                        Image(systemName: "plus")
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingSurahSelection = true
+                    } label: {
+                        Label("New Schedule", systemImage: "plus")
                     }
                 }
             }
@@ -102,7 +113,7 @@ struct SchedulesView: View {
         }
         .errorAlert($viewModel.error)
     }
-    
+
     private func deleteMessage(for schedule: ScheduleWithSurah) -> String {
         let question = "Are you sure you want to delete the schedule for \(schedule.surahEnglishName)?"
         switch viewModel.sessionCount(scheduleId: schedule.id) {
@@ -114,25 +125,6 @@ struct SchedulesView: View {
             return question + " Its \(count) completed sessions will also be removed from your history and stats."
         }
     }
-    
-    private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "calendar.badge.plus")
-                .font(.system(size: 64))
-                .foregroundColor(.gray.opacity(0.5))
-            
-            Text("No Schedules Yet")
-                .font(.headline)
-                .foregroundColor(.primary)
-            
-            Text("Tap the + button to create your first memorization schedule")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-        }
-        .padding()
-    }
 }
 
 struct ScheduleListRow: View {
@@ -140,59 +132,84 @@ struct ScheduleListRow: View {
     let onToggle: () async -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(schedule.surahArabicName)
                         .font(.headline)
-                    
+
                     Text(schedule.surahEnglishName)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                 }
-                
-                Spacer()
-                
-                Toggle("", isOn: Binding(
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // The label is hidden visually but still read by VoiceOver, which
+                // an empty-string toggle would not be.
+                Toggle("Active", isOn: Binding(
                     get: { schedule.isActive },
                     set: { _ in Task { await onToggle() } }
                 ))
                 .labelsHidden()
+                .tint(.islamicGreen)
             }
-            
-            HStack(spacing: 16) {
-                Label(schedule.frequency.displayName, systemImage: "calendar")
-                    .font(.caption)
-                    .foregroundColor(.islamicGreen)
-                
-                if !schedule.isFullSurah, let start = schedule.startPage, let end = schedule.endPage {
-                    Label("Pages \(start)-\(end)", systemImage: "book")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else {
-                    Label("Full Surah", systemImage: "book.closed")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                Text(schedule.nextDueDate, style: .date)
-                    .font(.caption)
-                    .foregroundColor(schedule.isDueToday ? .red : .secondary)
+
+            // Wraps rather than truncating once the type size grows.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Metrics.card) { metadata }
+                VStack(alignment: .leading, spacing: 4) { metadata }
             }
+            .font(.caption)
         }
+        .padding(.vertical, 4)
+        .opacity(schedule.isActive ? 1 : 0.55)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(action: onEdit) {
                 Label("Edit", systemImage: "pencil")
             }
             .tint(.blue)
-            
+
             Button(role: .destructive, action: onDelete) {
                 Label("Delete", systemImage: "trash")
             }
+        }
+    }
+
+    @ViewBuilder
+    private var metadata: some View {
+        Label(schedule.frequency.displayName, systemImage: "calendar")
+            .foregroundStyle(Color.islamicGreen)
+
+        if !schedule.isFullSurah, let start = schedule.startPage, let end = schedule.endPage {
+            Label("Pages \(start)–\(end)", systemImage: "book")
+                .foregroundStyle(.secondary)
+        } else {
+            Label("Full Surah", systemImage: "book.closed")
+                .foregroundStyle(.secondary)
+        }
+
+        Spacer(minLength: 0)
+
+        dueLabel
+    }
+
+    /// Overdue is called out by name and icon, not by colour alone; a review that
+    /// is merely due today stays neutral so the red keeps its meaning.
+    @ViewBuilder
+    private var dueLabel: some View {
+        if schedule.isOverdue {
+            Label("Overdue", systemImage: "exclamationmark.circle.fill")
+                .foregroundStyle(.red)
+                .fontWeight(.semibold)
+        } else if Calendar.current.isDateInToday(schedule.nextDueDate) {
+            Text("Due today")
+                .foregroundStyle(Color.islamicGreen)
+                .fontWeight(.medium)
+        } else {
+            Text(schedule.nextDueDate, format: .dateTime.month().day())
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -201,36 +218,41 @@ struct EditFrequencyView: View {
     let schedule: ScheduleWithSurah
     let onSave: (Frequency?, Date?) async -> Void
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var selectedFrequency: Frequency
     @State private var selectedDate: Date
     @State private var shouldUpdateDate: Bool = false
-    
+
     init(schedule: ScheduleWithSurah, onSave: @escaping (Frequency?, Date?) async -> Void) {
         self.schedule = schedule
         self.onSave = onSave
         self._selectedFrequency = State(initialValue: schedule.frequency)
         self._selectedDate = State(initialValue: schedule.nextDueDate)
     }
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(schedule.surahArabicName)
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                        
+                            .font(.title3.weight(.semibold))
+
                         Text(schedule.surahEnglishName)
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
-                } header: {
-                    Text("Schedule")
+
+                    LabeledContent("Next Due") {
+                        Text(schedule.nextDueDate, format: .dateTime.weekday().month().day())
+                    }
+
+                    if schedule.isOverdue {
+                        OverdueBadge()
+                    }
                 }
-                
+
                 Section {
                     Picker("Frequency", selection: $selectedFrequency) {
                         ForEach(Frequency.allCases, id: \.self) { frequency in
@@ -242,35 +264,11 @@ struct EditFrequencyView: View {
                 } footer: {
                     Text("Changing the frequency will automatically update the next due date.")
                 }
-                
+
                 Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Current Next Due Date")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(schedule.nextDueDate, style: .date)
-                            .font(.subheadline)
-                        
-                        if schedule.isOverdue {
-                            HStack {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundColor(.red)
-                                Text("OVERDUE")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.red)
-                            }
-                            .padding(.top, 4)
-                        }
-                    }
-                } header: {
-                    Text("Current Schedule")
-                }
-                
-                Section {
-                    Toggle("Manually Set Next Due Date", isOn: $shouldUpdateDate)
+                    Toggle("Set Date Manually", isOn: $shouldUpdateDate)
                         .tint(.islamicGreen)
-                    
+
                     if shouldUpdateDate {
                         DatePicker(
                             "New Due Date",
@@ -290,16 +288,15 @@ struct EditFrequencyView: View {
                     }
                 }
             }
+            .animation(.snappy(duration: 0.3), value: shouldUpdateDate)
             .navigationTitle("Edit Schedule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
+
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         Task {
                             // Pass only what changed; resending the same frequency would

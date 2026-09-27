@@ -20,10 +20,6 @@ struct QuranMemApp: App {
     @StateObject private var notificationManager = NotificationManager.shared
     @Environment(\.scenePhase) private var scenePhase
     
-    init() {
-        setupAppearance()
-    }
-    
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -47,14 +43,6 @@ struct QuranMemApp: App {
         }
     }
     
-    private func setupAppearance() {
-        UINavigationBar.appearance().largeTitleTextAttributes = [
-            .foregroundColor: UIColor(Color.islamicGreen)
-        ]
-        UINavigationBar.appearance().titleTextAttributes = [
-            .foregroundColor: UIColor(Color.islamicGreen)
-        ]
-    }
 }
 
 struct ContentView: View {
@@ -90,13 +78,8 @@ struct ContentView: View {
                     Label("Settings", systemImage: "gear")
                 }
         }
-        .accentColor(.islamicGreen)
+        .tint(.islamicGreen)
         .preferredColorScheme(preferredColorScheme)
     }
 }
 
-extension Color {
-    static let islamicGreen = Color(red: 0.02, green: 0.47, blue: 0.34)
-    static let islamicDark = Color(red: 0.02, green: 0.37, blue: 0.27)
-    static let goldAccent = Color(red: 0.85, green: 0.65, blue: 0.13)
-}

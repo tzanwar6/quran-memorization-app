@@ -11,7 +11,7 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 appearanceSection
                 notificationsSection
@@ -51,6 +51,7 @@ struct SettingsView: View {
                     }
                 }
             ))
+            .tint(.islamicGreen)
             
             if viewModel.notificationsEnabled {
                 DatePicker(
@@ -98,9 +99,13 @@ struct SettingsView: View {
             Button(role: .destructive) {
                 viewModel.showResetConfirmation = true
             } label: {
-                HStack {
-                    Image(systemName: "trash")
+                // The destructive role reds the title but not the glyph, which
+                // otherwise picks up the app's green tint from the tab view.
+                Label {
                     Text("Reset All Data")
+                } icon: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
                 }
             }
         } header: {
@@ -122,19 +127,8 @@ struct SettingsView: View {
     
     private var aboutSection: some View {
         Section {
-            HStack {
-                Text("Version")
-                Spacer()
-                Text(viewModel.appVersion)
-                    .foregroundColor(.secondary)
-            }
-            
-            HStack {
-                Text("Build")
-                Spacer()
-                Text(viewModel.buildNumber)
-                    .foregroundColor(.secondary)
-            }
+            LabeledContent("Version", value: viewModel.appVersion)
+            LabeledContent("Build", value: viewModel.buildNumber)
         } header: {
             Text("About")
         } footer: {
@@ -144,12 +138,12 @@ struct SettingsView: View {
                 
                 Text("May Allah make your memorization journey easy")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 
                 Text("بارك الله فيك")
                     .font(.caption)
-                    .foregroundColor(.islamicGreen)
+                    .foregroundStyle(Color.islamicGreen)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical)

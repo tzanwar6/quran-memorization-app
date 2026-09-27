@@ -4,17 +4,20 @@ struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
     @State private var selectedSchedule: ScheduleWithSurah?
     @State private var selectedDay: CalendarDaySelection?
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
-                    todayTasksSection
-                    
+                VStack(spacing: Metrics.section) {
+                    todaySection
                     calendarSection
                 }
-                .padding()
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.top, 4)
+                // Clears the floating tab bar so the last card isn't trapped under it.
+                .padding(.bottom, Metrics.section)
             }
+            .background(Color.appCanvas)
             .navigationTitle("QuranMem")
             .refreshable {
                 await viewModel.loadData()
@@ -41,17 +44,23 @@ struct HomeView: View {
                         await viewModel.undoLastSession()
                     }
                 }
-                .padding()
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.bottom, Metrics.card)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .task(id: completed.sessionId) {
                     try? await Task.sleep(nanoseconds: 8_000_000_000)
-                    withAnimation {
+                    withAnimation(.smooth(duration: 0.35)) {
                         viewModel.dismissUndo(for: completed)
                     }
                 }
             }
         }
-        .animation(.easeInOut, value: viewModel.lastCompleted)
+        .animation(.snappy(duration: 0.35), value: viewModel.lastCompleted)
+        // A completed review is the outcome of a multi-step task, so it earns the
+        // success notification rather than a plain tap impact. Dismissal is silent.
+        .sensoryFeedback(trigger: viewModel.lastCompleted) { _, new in
+            new == nil ? nil : .success
+        }
         .errorAlert($viewModel.error)
         .onChange(of: selectedSchedule) { _, schedule in
             if schedule == nil {
@@ -62,19 +71,24 @@ struct HomeView: View {
             }
         }
     }
-    
-    private var todayTasksSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Today's Tasks")
-                .font(.headline)
-                .foregroundColor(.primary)
-            
+
+    private var todaySection: some View {
+        VStack(alignment: .leading, spacing: Metrics.card) {
+            SectionHeader(title: "Today")
+
             if viewModel.todaySchedules.isEmpty && !viewModel.hasLoaded {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 32)
             } else if viewModel.todaySchedules.isEmpty {
-                emptyStateView
+                ContentUnavailableView(
+                    "Nothing Due Today",
+                    systemImage: "checkmark.circle",
+                    description: Text("You're on track. Your next review is on the calendar below.")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .cardSurface()
             } else {
                 ForEach(viewModel.todaySchedules) { schedule in
                     ScheduleTaskCard(schedule: schedule) {
@@ -84,13 +98,11 @@ struct HomeView: View {
             }
         }
     }
-    
+
     private var calendarSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Upcoming Schedule")
-                .font(.headline)
-                .foregroundColor(.primary)
-            
+        VStack(alignment: .leading, spacing: Metrics.card) {
+            SectionHeader(title: "Next Two Weeks")
+
             CalendarView(
                 schedules: viewModel.calendarSchedules,
                 onDateTap: { date in
@@ -105,24 +117,6 @@ struct HomeView: View {
             )
         }
     }
-    
-    private var emptyStateView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: 48))
-                .foregroundColor(.gray.opacity(0.5))
-            
-            Text("No tasks due today")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            
-            Text("Great job staying on track!")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
-    }
 }
 
 /// Wraps the tapped day so the sheet receives the date as its item.
@@ -134,30 +128,31 @@ struct CalendarDaySelection: Identifiable {
 struct CalendarView: View {
     let schedules: [Date: [ScheduleWithSurah]]
     let onDateTap: (Date) -> Void
-    
+
     private let calendar = Calendar.current
     private var today: Date {
         calendar.startOfDay(for: Date())
     }
-    
+
     private var startDate: Date {
         // Start from the beginning of the week containing today, using the region's first weekday
         let weekday = calendar.component(.weekday, from: today)
         let daysFromWeekStart = (weekday - calendar.firstWeekday + 7) % 7
         return calendar.date(byAdding: .day, value: -daysFromWeekStart, to: today) ?? today
     }
-    
+
     private var weekdaySymbols: [String] {
-        let symbols = calendar.shortWeekdaySymbols
+        // Very-short symbols keep seven columns legible on the narrowest iPhone.
+        let symbols = calendar.veryShortWeekdaySymbols
         let firstIndex = calendar.firstWeekday - 1
         return Array(symbols[firstIndex...] + symbols[..<firstIndex])
     }
-    
+
     private var endDate: Date {
         // 2 weeks (14 days) from start
         calendar.date(byAdding: .day, value: 13, to: startDate) ?? startDate
     }
-    
+
     private var dates: [Date] {
         var dates: [Date] = []
         var currentDate = startDate
@@ -167,23 +162,20 @@ struct CalendarView: View {
         }
         return dates
     }
-    
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Week day headers
+        VStack(spacing: 8) {
             HStack(spacing: 0) {
-                ForEach(weekdaySymbols, id: \.self) { day in
+                ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { _, day in
                     Text(day)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                 }
             }
-            .padding(.bottom, 8)
-            
-            // Calendar grid
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 6) {
+            .accessibilityHidden(true)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
                 ForEach(dates, id: \.self) { date in
                     CalendarDayView(
                         date: date,
@@ -197,10 +189,12 @@ struct CalendarView: View {
                 }
             }
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+        // Seven fixed columns can't reflow, so the day numbers collide at the top
+        // accessibility sizes. Cap the grid's scaling rather than let it break;
+        // the day sheet behind each cell has no cap and carries the full detail.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .padding(Metrics.card)
+        .cardSurface()
     }
 }
 
@@ -210,50 +204,97 @@ struct CalendarDayView: View {
     let isToday: Bool
     let isPast: Bool
     let onTap: () -> Void
-    
+
     private let calendar = Calendar.current
-    
+    // Grows with the type size so the marker never crowds its number.
+    @ScaledMetric(relativeTo: .callout) private var markerSize: CGFloat = 30
+
+    private var overdueCount: Int {
+        schedules.filter { $0.isOverdue && !isPast }.count
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(calendar.component(.day, from: date))")
-                .font(.system(size: 13, weight: isToday ? .bold : .regular))
-                .foregroundColor(isToday ? .white : (isPast ? .secondary : .primary))
-                .frame(width: 26, height: 26)
-                .background(isToday ? Color.islamicGreen : Color.clear)
-                .clipShape(Circle())
-            
-            if !schedules.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(schedules) { schedule in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(schedule.surahEnglishName)
-                                .font(.system(size: 8))
-                                .fontWeight(.medium)
-                                .foregroundColor(isPast ? .secondary : .primary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            
-                            if schedule.isOverdue && !isPast {
-                                Text("OVERDUE")
-                                    .font(.system(size: 6))
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.red)
-                                    .lineLimit(1)
-                            }
+        Button(action: onTap) {
+            VStack(spacing: 5) {
+                Text(date, format: .dateTime.day())
+                    .font(.callout)
+                    .fontWeight(isToday ? .semibold : .regular)
+                    .monospacedDigit()
+                    .foregroundStyle(numberStyle)
+                    .frame(width: markerSize, height: markerSize)
+                    .background {
+                        if isToday {
+                            Circle().fill(Color.islamicGreen)
                         }
                     }
+
+                DueDots(total: schedules.count, overdue: overdueCount)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: Metrics.minTarget)
+            .padding(.vertical, 4)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.card)
+        .opacity(isPast ? 0.4 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var numberStyle: Color {
+        // systemBackground is the counterpart to the accent fill in both
+        // appearances: white on the deep light-mode green, black on the lifted
+        // dark-mode one. A literal .white would sit at about 2:1 in dark mode.
+        if isToday { return Color(.systemBackground) }
+        return isPast ? Color(.tertiaryLabel) : .primary
+    }
+
+    private var accessibilityLabel: String {
+        var parts = [date.formatted(.dateTime.weekday(.wide).month(.wide).day())]
+        if isToday { parts.append("Today") }
+
+        switch schedules.count {
+        case 0: parts.append("No reviews")
+        case 1: parts.append("1 review")
+        case let count: parts.append("\(count) reviews")
+        }
+
+        if overdueCount > 0 {
+            parts.append("\(overdueCount) overdue")
+        }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// A day's review load, shown as a small run of dots. Overdue items lead in red.
+/// The names themselves live in the day sheet — at seven columns wide there is no
+/// width for a surah name that a reader could actually use.
+private struct DueDots: View {
+    let total: Int
+    let overdue: Int
+
+    @ScaledMetric(relativeTo: .caption2) private var dot: CGFloat = 5
+    private let maxDots = 3
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if total == 0 {
+                Color.clear
+            } else {
+                ForEach(0..<min(total, maxDots), id: \.self) { index in
+                    Circle()
+                        .fill(index < overdue ? Color.red : Color.islamicGreen)
+                        .frame(width: dot, height: dot)
+                }
+                if total > maxDots {
+                    Text("+\(total - maxDots)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(minHeight: 80)
-        .padding(.horizontal, 2)
-        .padding(.vertical, 4)
-        .opacity(isPast ? 0.5 : 1.0)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onTap()
-        }
+        .frame(height: dot + 3)
     }
 }
 
@@ -261,212 +302,199 @@ struct DateDetailView: View {
     let date: Date
     let schedules: [ScheduleWithSurah]
     @Environment(\.dismiss) private var dismiss
-    
+
     private let calendar = Calendar.current
-    private var dateFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        return formatter
-    }
-    
+
     private var isToday: Bool {
         calendar.isDateInToday(date)
     }
-    
+
     private var isPast: Bool {
         date < calendar.startOfDay(for: Date())
     }
-    
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Date header
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(dateFormatter.string(from: date))
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
-                        
-                        if isToday {
-                            Text("Today")
-                                .font(.subheadline)
-                                .foregroundColor(.islamicGreen)
-                                .fontWeight(.semibold)
-                        } else if isPast {
-                            Text("Past Date")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.top)
-                    
-                    Divider()
-                    
-                    // Schedules list
+                VStack(alignment: .leading, spacing: Metrics.card) {
                     if schedules.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "calendar")
-                                .font(.system(size: 48))
-                                .foregroundColor(.gray.opacity(0.5))
-                            
-                            Text("No schedules for this day")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
+                        ContentUnavailableView(
+                            "Nothing Scheduled",
+                            systemImage: "calendar",
+                            description: Text("No reviews fall on this day.")
+                        )
+                        .padding(.top, 40)
                     } else {
-                        VStack(spacing: 12) {
-                            ForEach(schedules) { schedule in
-                                ScheduleDetailCard(schedule: schedule, isPast: isPast)
-                            }
+                        ForEach(schedules) { schedule in
+                            ScheduleDetailCard(schedule: schedule, isPast: isPast)
                         }
-                        .padding(.horizontal)
                     }
                 }
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.vertical, Metrics.card)
             }
-            .navigationTitle("Schedule Details")
+            .background(Color.appCanvas)
+            .navigationTitle(date.formatted(.dateTime.weekday(.wide).month().day()))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text(date, format: .dateTime.weekday(.wide).month().day())
+                            .font(.headline)
+                        if isToday {
+                            Text("Today")
+                                .font(.caption)
+                                .foregroundStyle(Color.islamicGreen)
+                        } else if isPast {
+                            Text("Past")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
 struct ScheduleDetailCard: View {
     let schedule: ScheduleWithSurah
     let isPast: Bool
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Metrics.card) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(schedule.surahArabicName)
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-                
+                    .font(.title3.weight(.semibold))
+
                 Text(schedule.surahEnglishName)
-                    .font(.headline)
-                    .foregroundColor(.secondary)
-            }
-            
-            Divider()
-            
-            HStack(spacing: 16) {
-                Label(schedule.frequency.displayName, systemImage: "calendar")
                     .font(.subheadline)
-                    .foregroundColor(.islamicGreen)
-                
-                if schedule.isFullSurah {
-                    Label("Full Surah", systemImage: "book.closed")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                } else if let start = schedule.startPage, let end = schedule.endPage {
-                    Label("Pages \(start)-\(end)", systemImage: "book")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
+                    .foregroundStyle(.secondary)
             }
-            
+
+            Divider()
+
+            // Wraps to a second line instead of truncating at large type sizes.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Metrics.gutter) { scopeLabels }
+                VStack(alignment: .leading, spacing: 6) { scopeLabels }
+            }
+
             if schedule.isOverdue && !isPast {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.red)
-                    Text("OVERDUE")
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .foregroundColor(.red)
-                }
-                .padding(.top, 4)
+                OverdueBadge()
             }
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Metrics.gutter)
+        .cardSurface()
+    }
+
+    @ViewBuilder
+    private var scopeLabels: some View {
+        Label(schedule.frequency.displayName, systemImage: "calendar")
+            .font(.subheadline)
+            .foregroundStyle(Color.islamicGreen)
+
+        if schedule.isFullSurah {
+            Label("Full Surah", systemImage: "book.closed")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else if let start = schedule.startPage, let end = schedule.endPage {
+            Label("Pages \(start)–\(end)", systemImage: "book")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
 struct ScheduleTaskCard: View {
     let schedule: ScheduleWithSurah
     let onTap: () -> Void
-    
+
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: Metrics.card) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(schedule.surahArabicName)
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
-                    
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+
                     Text(schedule.surahEnglishName)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    HStack(spacing: 8) {
-                        Label(schedule.frequency.displayName, systemImage: "calendar")
-                            .font(.caption)
-                            .foregroundColor(.islamicGreen)
-                        
-                        if schedule.isOverdue {
-                            Text("OVERDUE")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(.red)
-                        }
+                        .foregroundStyle(.secondary)
+
+                    // Side by side until the type size makes them too wide, at
+                    // which point they stack — otherwise "Weekly" and the badge
+                    // hyphenate mid-word at the accessibility sizes.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { metadata }
+                        VStack(alignment: .leading, spacing: 6) { metadata }
                     }
+                    .padding(.top, 2)
                 }
-                
-                Spacer()
-                
+                .frame(maxWidth: .infinity, alignment: .leading)
+
                 Image(systemName: "chevron.right")
-                    .foregroundColor(.secondary)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-            .padding()
-            .background(Color(.systemBackground))
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+            .padding(Metrics.gutter)
+            .cardSurface()
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.card)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the session to record how it went")
+    }
+
+    @ViewBuilder
+    private var metadata: some View {
+        Label(schedule.frequency.displayName, systemImage: "calendar")
+            .font(.caption)
+            .foregroundStyle(Color.islamicGreen)
+
+        if schedule.isOverdue {
+            OverdueBadge()
+        }
     }
 }
 
 struct UndoBanner: View {
     let completed: CompletedSession
     let onUndo: () -> Void
-    
+
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Metrics.card) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.islamicGreen)
-            
+                .foregroundStyle(Color.islamicGreen)
+                .font(.title3)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(completed.surahEnglishName) completed")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
+                    .font(.subheadline.weight(.medium))
+
                 Text("Next review \(completed.nextDueDate.formatted(.dateTime.weekday(.wide).month().day()))")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
-            
-            Spacer()
-            
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             Button("Undo", action: onUndo)
-                .fontWeight(.semibold)
-                .foregroundColor(.islamicGreen)
+                .font(.subheadline.weight(.semibold))
+                .tint(.islamicGreen)
         }
-        .padding()
-        .background(.regularMaterial)
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+        .padding(Metrics.card)
+        // Floating chrome over content is exactly where a system material belongs.
+        .background(.regularMaterial, in: .rect(cornerRadius: Metrics.cardRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+                .strokeBorder(Color(.separator), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .accessibilityElement(children: .contain)
     }
 }

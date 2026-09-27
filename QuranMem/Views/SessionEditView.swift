@@ -33,73 +33,56 @@ struct SessionEditView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(session.surahArabicName)
-                            .font(.title3)
-                            .fontWeight(.semibold)
-                        Text(session.surahEnglishName)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Text(session.completedAt, format: .dateTime.weekday(.wide).day().month().hour().minute())
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: Metrics.section) {
+                    header
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Rating")
-                            .font(.headline)
+                    VStack(alignment: .leading, spacing: Metrics.card) {
+                        SectionHeader(title: "Rating")
 
-                        ForEach(PerformanceRating.allCases, id: \.self) { rating in
-                            RatingButton(rating: rating, isSelected: selectedRating == rating) {
-                                selectedRating = rating
+                        VStack(spacing: 8) {
+                            ForEach(PerformanceRating.allCases, id: \.self) { rating in
+                                RatingButton(rating: rating, isSelected: selectedRating == rating) {
+                                    selectedRating = rating
+                                }
                             }
                         }
                     }
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Notes")
-                            .font(.headline)
-
-                        TextEditor(text: $notes)
-                            .frame(height: 100)
-                            .padding(8)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color(.systemGray4), lineWidth: 1)
-                            )
+                    VStack(alignment: .leading, spacing: Metrics.card) {
+                        SectionHeader(title: "Notes")
+                        NotesEditor(text: $notes, placeholder: "Anything worth remembering")
                     }
 
                     Text("Editing or deleting a past session updates your stats but doesn't move the schedule's due date. To change the date, edit the schedule.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
 
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
                     } label: {
                         Label("Delete Session", systemImage: "trash")
                             .frame(maxWidth: .infinity)
+                            .frame(minHeight: Metrics.minTarget - 16)
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSubmitting)
                 }
-                .padding()
+                .padding(.horizontal, Metrics.gutter)
+                .padding(.vertical, Metrics.card)
             }
+            .background(Color.appCanvas)
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Edit Session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .disabled(isSubmitting)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .disabled(isSubmitting)
                 }
 
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         isSubmitting = true
                         Task {
@@ -124,5 +107,24 @@ struct SessionEditView: View {
                 Text("This removes the session from your history and stats.")
             }
         }
+        .sensoryFeedback(.selection, trigger: selectedRating)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(session.surahArabicName)
+                .font(.title3.weight(.semibold))
+            Text(session.surahEnglishName)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(session.completedAt, format: .dateTime.weekday(.wide).day().month().hour().minute())
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Metrics.gutter)
+        .cardSurface()
+        .accessibilityElement(children: .combine)
     }
 }

@@ -61,9 +61,11 @@ class HomeViewModel: ObservableObject {
             var currentDate = scheduleDueDate
             
             // If the next due date is in the past, show it on today's date for visibility
-            if currentDate < today {
+            let isOverdue = scheduleDueDate < today
+            if isOverdue {
                 currentDate = today
             }
+            var isFirstOccurrence = true
             
             // Limit iterations to prevent infinite loops
             var iterationCount = 0
@@ -79,7 +81,11 @@ class HomeViewModel: ObservableObject {
                     result[dateKey] = []
                 }
                 
-                // Create a copy of the schedule with this due date
+                // Create a copy of the schedule with this due date. An overdue
+                // review is pinned to today's cell so it stays visible, but it
+                // keeps its real due date — otherwise the copy reports itself as
+                // on time and the calendar loses the one fact worth showing.
+                let dueDateForCell = (isOverdue && isFirstOccurrence) ? scheduleDueDate : dateKey
                 let scheduleForDate = ScheduleWithSurah(
                     id: schedule.id,
                     surahId: schedule.surahId,
@@ -90,11 +96,12 @@ class HomeViewModel: ObservableObject {
                     isFullSurah: schedule.isFullSurah,
                     startPage: schedule.startPage,
                     endPage: schedule.endPage,
-                    nextDueDate: dateKey,
+                    nextDueDate: dueDateForCell,
                     isActive: schedule.isActive
                 )
                 
                 result[dateKey]?.append(scheduleForDate)
+                isFirstOccurrence = false
                 
                 // Calculate next due date based on frequency
                 if let days = schedule.frequency.daysToAdd {
