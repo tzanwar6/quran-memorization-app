@@ -50,6 +50,10 @@ QuranMem is a native iOS application designed to help Muslims memorize and retai
 - Real-time statistics updates
 
 ### 🏠 Dashboard Overview
+- Daily summary showing completed and remaining passages, with Start/Continue Review
+- Guided queue: recite a passage, see previous notes, rate it, and move to the next
+- Distinct first-use, quiet-day, finished-day, and paused-schedule states
+- Create your first schedule directly from Home
 - Quick view of today's due tasks
 - Current streak and total sessions
 - Recent session history

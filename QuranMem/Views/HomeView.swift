@@ -2,7 +2,9 @@ import SwiftUI
 
 struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
-    @State private var selectedSchedule: ScheduleWithSurah?
+    let onManageSchedules: () -> Void
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var presentation: HomePresentation?
     @State private var selectedDay: CalendarDaySelection?
 
     var body: some View {
@@ -10,7 +12,9 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: Metrics.section) {
                     todaySection
-                    calendarSection
+                    if viewModel.allSchedules.contains(where: \.isActive) {
+                        calendarSection
+                    }
                 }
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.top, 4)
@@ -26,19 +30,33 @@ struct HomeView: View {
                 await viewModel.loadData()
             }
         }
-        // sheet(item:) rather than sheet(isPresented:): the content of an isPresented sheet can be
-        // built before the accompanying state lands, which shows an empty sheet the first time.
-        .sheet(item: $selectedSchedule) { schedule in
-            MemorizationSessionView(schedule: schedule) { rating, notes in
-                await viewModel.completeSession(
-                    scheduleId: schedule.id,
-                    performanceRating: rating,
-                    notes: notes
-                )
+        .sheet(item: $presentation, onDismiss: {
+            Task { await viewModel.loadData() }
+        }) { destination in
+            switch destination {
+            case .queue(let schedules):
+                ReviewQueueView(
+                    schedules: schedules,
+                    previousNotes: viewModel.previousNotes,
+                    nextReviewDate: { viewModel.dailySummary.nextReviewDate }
+                ) { id, rating, notes in
+                    try await viewModel.completeSession(scheduleId: id, performanceRating: rating, notes: notes)
+                }
+            case .quickLog(let schedule):
+                MemorizationSessionView(schedule: schedule) { rating, notes in
+                    try await viewModel.completeSession(scheduleId: schedule.id, performanceRating: rating, notes: notes)
+                }
+            case .create:
+                SurahSelectionView(surahs: viewModel.surahs, isPresented: Binding(
+                    get: { presentation != nil },
+                    set: { if !$0 { presentation = nil } }
+                )) { id, frequency, fullSurah, start, end in
+                    try await viewModel.createSchedule(surahId: id, frequency: frequency, isFullSurah: fullSurah, startPage: start, endPage: end)
+                }
             }
         }
         .overlay(alignment: .bottom) {
-            if let completed = viewModel.lastCompleted {
+            if presentation == nil, let completed = viewModel.lastCompleted {
                 UndoBanner(completed: completed) {
                     Task {
                         await viewModel.undoLastSession()
@@ -48,7 +66,8 @@ struct HomeView: View {
                 .padding(.bottom, Metrics.card)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .task(id: completed.sessionId) {
-                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    do { try await Task.sleep(nanoseconds: 8_000_000_000) }
+                    catch { return }
                     withAnimation(.smooth(duration: 0.35)) {
                         viewModel.dismissUndo(for: completed)
                     }
@@ -62,41 +81,100 @@ struct HomeView: View {
             new == nil ? nil : .success
         }
         .errorAlert($viewModel.error)
-        .onChange(of: selectedSchedule) { _, schedule in
-            if schedule == nil {
-                // Refresh data when modal is dismissed
-                Task {
-                    await viewModel.loadData()
-                }
-            }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await viewModel.loadData() } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            Task { await viewModel.loadData() }
         }
     }
 
     private var todaySection: some View {
         VStack(alignment: .leading, spacing: Metrics.card) {
             SectionHeader(title: "Today")
-
-            if viewModel.todaySchedules.isEmpty && !viewModel.hasLoaded {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 32)
-            } else if viewModel.todaySchedules.isEmpty {
-                ContentUnavailableView(
-                    "Nothing Due Today",
-                    systemImage: "checkmark.circle",
-                    description: Text("You're on track. Your next review is on the calendar below.")
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .cardSurface()
-            } else {
+            if !viewModel.hasLoaded {
+                if viewModel.loadFailed {
+                    ContentUnavailableView {
+                        Label("Couldn’t Load Reviews", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                    } description: {
+                        Text("Try again to see your saved progress.")
+                    } actions: {
+                        Button("Try Again") { Task { await viewModel.loadData() } }
+                            .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 32)
+                }
+            } else if viewModel.dailySummary.state == .reviewsDue {
+                dailySummaryCard
+                Text("Ready to Review")
+                    .font(.headline)
+                    .padding(.top, Metrics.card)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Tap a passage to log a review you’ve already completed.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 ForEach(viewModel.todaySchedules) { schedule in
                     ScheduleTaskCard(schedule: schedule) {
-                        selectedSchedule = schedule
+                        presentation = .quickLog(schedule)
                     }
                 }
+            } else {
+                emptyState
             }
         }
+    }
+
+    private var dailySummaryCard: some View {
+        let summary = viewModel.dailySummary
+        return VStack(alignment: .leading, spacing: Metrics.card) {
+            Text("\(summary.completedCount) of \(summary.totalCount) reviews complete")
+                .font(.title2.weight(.semibold))
+                .accessibilityIdentifier("dailySummary")
+            ProgressView(value: Double(summary.completedCount), total: Double(max(1, summary.totalCount)))
+                .accessibilityLabel("Today’s progress")
+                .accessibilityValue("\(summary.completedCount) of \(summary.totalCount) reviews complete")
+            Text("\(summary.remaining.count) \(summary.remaining.count == 1 ? "passage is" : "passages are") ready for your attention.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button {
+                presentation = .queue(viewModel.todaySchedules)
+            } label: {
+                Label(summary.completedCount > 0 ? "Continue Review" : "Start Review", systemImage: "play.fill")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity, minHeight: Metrics.minTarget)
+                    .foregroundStyle(Color(.systemBackground))
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("startReview")
+        }
+        .padding(Metrics.gutter)
+        .cardSurface()
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        let summary = viewModel.dailySummary
+        switch summary.state {
+        case .gettingStarted:
+            HomeEmptyState(title: "Begin Your Review Rhythm", symbol: "book.closed", message: "Choose a surah you’re memorizing. We’ll help you keep it fresh, one review at a time.", actionTitle: "Choose Your First Surah") {
+                presentation = .create
+            }
+        case .finished:
+            HomeEmptyState(title: "Today’s Reviews Are Complete", symbol: "checkmark.circle.fill", message: "\(summary.completedCount) \(summary.completedCount == 1 ? "passage" : "passages") reviewed today. \(nextReviewMessage)", actionTitle: "Manage Schedules", action: onManageSchedules)
+        case .quietDay:
+            HomeEmptyState(title: "A Quiet Day", symbol: "calendar", message: "Nothing is due today. \(nextReviewMessage)", actionTitle: "Manage Schedules", action: onManageSchedules)
+        case .paused:
+            HomeEmptyState(title: "Your Reviews Are Paused", symbol: "pause.circle", message: "Turn on a schedule when you’re ready to return. Your review history is still here.", actionTitle: "Manage Schedules", action: onManageSchedules)
+        case .reviewsDue:
+            EmptyView()
+        }
+    }
+
+    private var nextReviewMessage: String {
+        if let next = viewModel.dailySummary.nextReviewDate {
+            return "Your next review is \(next.formatted(date: .abbreviated, time: .omitted))."
+        }
+        return "You can manage your review rhythm in Schedules."
     }
 
     private var calendarSection: some View {
@@ -448,11 +526,16 @@ struct ScheduleTaskCard: View {
         }
         .buttonStyle(.card)
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens the session to record how it went")
+        .accessibilityHint("Log a review you’ve already completed")
     }
 
     @ViewBuilder
     private var metadata: some View {
+        Label(schedule.scopeDescription, systemImage: "book.closed")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+
         Label(schedule.frequency.displayName, systemImage: "calendar")
             .font(.caption)
             .foregroundStyle(Color.islamicGreen)
@@ -496,5 +579,50 @@ struct UndoBanner: View {
         }
         .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
         .accessibilityElement(children: .contain)
+    }
+}
+
+private enum HomePresentation: Identifiable {
+    case create
+    case quickLog(ScheduleWithSurah)
+    case queue([ScheduleWithSurah])
+
+    var id: String {
+        switch self {
+        case .create: return "create"
+        case .quickLog(let schedule): return "log-\(schedule.id)"
+        case .queue: return "queue"
+        }
+    }
+}
+
+private struct HomeEmptyState: View {
+    let title: String
+    let symbol: String
+    let message: String
+    let actionTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: Metrics.card) {
+            Image(systemName: symbol)
+                .font(.largeTitle)
+                .foregroundStyle(Color.islamicGreen)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            Text(message)
+                .font(.body)
+                .foregroundStyle(.secondary)
+            Button(actionTitle, action: action)
+                .buttonStyle(.bordered)
+                .frame(minHeight: Metrics.minTarget)
+                .padding(.top, 4)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(Metrics.section)
+        .cardSurface()
     }
 }

@@ -45,7 +45,10 @@ struct QuranMemApp: App {
     
 }
 
+private enum AppTab: Hashable { case home, schedules, progress, settings }
+
 struct ContentView: View {
+    @State private var selectedTab: AppTab = .home
     @AppStorage("colorScheme") private var colorSchemeString: String = ColorSchemeOption.system.rawValue
     
     private var preferredColorScheme: ColorScheme? {
@@ -57,23 +60,27 @@ struct ContentView: View {
     }
     
     var body: some View {
-        TabView {
-            HomeView()
+        TabView(selection: $selectedTab) {
+            HomeView(onManageSchedules: { selectedTab = .schedules })
+                .tag(AppTab.home)
                 .tabItem {
                     Label("Home", systemImage: "house.fill")
                 }
             
             SchedulesView()
+                .tag(AppTab.schedules)
                 .tabItem {
                     Label("Schedules", systemImage: "calendar")
                 }
             
             ProgressTabView()
+                .tag(AppTab.progress)
                 .tabItem {
                     Label("Progress", systemImage: "chart.bar.fill")
                 }
             
             SettingsView()
+                .tag(AppTab.settings)
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }

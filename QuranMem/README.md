@@ -65,6 +65,13 @@ The Core Data model, `surahs.json` and the notification permission description a
 ## 📱 App Features
 
 ### Home Screen
+- Daily summary counts unique reviewed schedules for the local calendar day, plus remaining due/overdue passages
+- Start/Continue Review opens a queue with passage scope and previous notes, followed by rating and the next passage
+- End a queue at any point; saved passages stay complete and remaining passages stay due
+- Tap an individual passage to log a review already completed outside the app
+- First-use, quiet-day, completed-day, and paused-schedule states each offer an appropriate next action
+- First-time users can create a schedule directly from Home
+- Failed session or schedule saves preserve form input for retry
 - Today's due and overdue tasks
 - Two-week calendar of upcoming reviews (weeks start on the region's first weekday)
 - Complete memorization sessions with performance ratings

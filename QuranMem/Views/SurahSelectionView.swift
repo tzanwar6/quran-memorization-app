@@ -3,7 +3,7 @@ import SwiftUI
 struct SurahSelectionView: View {
     let surahs: [Surah]
     @Binding var isPresented: Bool
-    let onCreate: (Int, Frequency, Bool, Int?, Int?) async -> Void
+    let onCreate: (Int, Frequency, Bool, Int?, Int?) async throws -> Void
 
     @State private var searchText = ""
     @State private var selectedSurah: Surah?
@@ -48,7 +48,7 @@ struct SurahSelectionView: View {
             }
             .navigationDestination(item: $selectedSurah) { surah in
                 ScheduleConfigurationView(surah: surah) { frequency, isFullSurah, startPage, endPage in
-                    await onCreate(surah.id, frequency, isFullSurah, startPage, endPage)
+                    try await onCreate(surah.id, frequency, isFullSurah, startPage, endPage)
                     isPresented = false
                 }
             }
@@ -60,13 +60,14 @@ struct SurahSelectionView: View {
 /// the back button and the title say where you are.
 struct ScheduleConfigurationView: View {
     let surah: Surah
-    let onCreate: (Frequency, Bool, Int?, Int?) async -> Void
+    let onCreate: (Frequency, Bool, Int?, Int?) async throws -> Void
 
     @State private var frequency: Frequency = .daily
     @State private var isFullSurah = true
     @State private var startPage = ""
     @State private var endPage = ""
     @State private var isCreating = false
+    @State private var error: String?
 
     /// Reported inline under the fields rather than in an alert after the fact,
     /// and it also gates the Create button — the error is prevented, not announced.
@@ -153,6 +154,8 @@ struct ScheduleConfigurationView: View {
                 }
             }
         }
+        .interactiveDismissDisabled(isCreating)
+        .errorAlert($error, title: "Schedule Not Saved")
         .navigationTitle("New Schedule")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -160,7 +163,12 @@ struct ScheduleConfigurationView: View {
                 Button("Create") {
                     isCreating = true
                     Task {
-                        await onCreate(frequency, isFullSurah, Int(startPage), Int(endPage))
+                        defer { isCreating = false }
+                        do {
+                            try await onCreate(frequency, isFullSurah, Int(startPage), Int(endPage))
+                        } catch {
+                            self.error = "\(error.localizedDescription) Your choices are still here; please try again."
+                        }
                     }
                 }
                 .fontWeight(.semibold)

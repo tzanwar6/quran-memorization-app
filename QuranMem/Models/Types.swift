@@ -133,6 +133,12 @@ struct ScheduleWithSurah: Identifiable, Equatable {
     let nextDueDate: Date
     let isActive: Bool
     
+    var scopeDescription: String {
+        if isFullSurah { return "Full Surah" }
+        guard let startPage, let endPage else { return "Selected Pages" }
+        return startPage == endPage ? "Page \(startPage)" : "Pages \(startPage)–\(endPage)"
+    }
+
     var isOverdue: Bool {
         nextDueDate < Calendar.current.startOfDay(for: Date())
     }

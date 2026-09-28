@@ -98,7 +98,12 @@ class DataStore: ObservableObject {
         schedule.createdAt = Date()
         schedule.updatedAt = Date()
 
-        try viewContext.save()
+        do {
+            try viewContext.save()
+        } catch {
+            viewContext.rollback()
+            throw error
+        }
     }
 
     func updateSchedule(
@@ -173,36 +178,42 @@ class DataStore: ObservableObject {
             throw DataStoreError.scheduleNotFound
         }
 
-        let sessionId = UUID()
-        let session = SessionEntity(context: viewContext)
-        session.id = sessionId
-        session.scheduleId = scheduleId
-        session.performanceRating = performanceRating.rawValue
-        session.completedAt = now
-        session.notes = notes
+        let surahName = try await getSurah(id: schedule.surahId)?.englishName ?? ""
+        do {
+            let sessionId = UUID()
+            let session = SessionEntity(context: viewContext)
+            session.id = sessionId
+            session.scheduleId = scheduleId
+            session.performanceRating = performanceRating.rawValue
+            session.completedAt = now
+            session.notes = notes
 
-        let frequency = Frequency(rawValue: schedule.frequency ?? "daily") ?? .daily
-        let previousDueDate = schedule.nextDueDate ?? now
-        let nextDueDate = ReviewEngine.nextDueDateAfterCompletion(
-            frequency: frequency,
-            currentDueDate: previousDueDate,
-            rating: performanceRating,
-            preferences: preferences(),
-            now: now
-        )
-        schedule.nextDueDate = nextDueDate
-        schedule.updatedAt = now
+            let frequency = Frequency(rawValue: schedule.frequency ?? "daily") ?? .daily
+            let previousDueDate = schedule.nextDueDate ?? now
+            let nextDueDate = ReviewEngine.nextDueDateAfterCompletion(
+                frequency: frequency,
+                currentDueDate: previousDueDate,
+                rating: performanceRating,
+                preferences: preferences(),
+                now: now
+            )
+            schedule.nextDueDate = nextDueDate
+            schedule.updatedAt = now
 
-        try recalculateStats(now: now)
-        try viewContext.save()
+            try recalculateStats(now: now)
+            try viewContext.save()
 
-        return CompletedSession(
-            sessionId: sessionId,
-            scheduleId: scheduleId,
-            surahEnglishName: try await getSurah(id: schedule.surahId)?.englishName ?? "",
-            previousDueDate: previousDueDate,
-            nextDueDate: nextDueDate
-        )
+            return CompletedSession(
+                sessionId: sessionId,
+                scheduleId: scheduleId,
+                surahEnglishName: surahName,
+                previousDueDate: previousDueDate,
+                nextDueDate: nextDueDate
+            )
+        } catch {
+            viewContext.rollback()
+            throw error
+        }
     }
 
     /// Removes a just-completed session and puts the schedule back on its previous due date,

@@ -6,12 +6,31 @@ import Combine
 class HomeViewModel: ObservableObject {
     @Published var todaySchedules: [ScheduleWithSurah] = []
     @Published var calendarSchedules: [Date: [ScheduleWithSurah]] = [:]
+    @Published private(set) var allSchedules: [ScheduleWithSurah] = []
+    @Published private(set) var sessions: [SessionWithSchedule] = []
+    @Published private(set) var surahs: [Surah] = []
     @Published var isLoading = false
     @Published private(set) var hasLoaded = false
+    @Published private(set) var loadFailed = false
     @Published var error: String?
     /// The most recently completed session, while it can still be undone.
     @Published var lastCompleted: CompletedSession?
     
+    var dailySummary: DailyReviewSummary {
+        DailyReviewSummary(schedules: allSchedules, sessions: sessions)
+    }
+
+    var previousNotes: [UUID: String] {
+        var notes: [UUID: String] = [:]
+        for session in sessions.sorted(by: { $0.completedAt > $1.completedAt }) {
+            if notes[session.scheduleId] == nil,
+               let note = session.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+                notes[session.scheduleId] = note
+            }
+        }
+        return notes
+    }
+
     private let dataStore: DataStore
     private let notificationManager: NotificationManager
     
@@ -28,22 +47,25 @@ class HomeViewModel: ObservableObject {
         error = nil
         
         do {
-            async let todaySchedules = dataStore.getTodaySchedules()
-            async let allSchedules = dataStore.getAllSchedules()
-            
-            self.todaySchedules = try await todaySchedules
-            let schedules = try await allSchedules
-            
-            // Calculate calendar schedules for next 2 weeks
+            let schedules = try await dataStore.getAllSchedules()
+            let sessions = try await dataStore.getRecentSessions()
+            let surahs = try await dataStore.getAllSurahs()
+            // Publish one complete snapshot only after every fetch succeeds.
+            self.allSchedules = schedules
+            self.sessions = sessions
+            self.surahs = surahs
+            self.todaySchedules = DailyReviewSummary(schedules: schedules, sessions: sessions).remaining
             calendarSchedules = calculateCalendarSchedules(schedules: schedules)
-            
+            hasLoaded = true
+            loadFailed = false
+
             updateBadgeCount()
         } catch {
+            loadFailed = true
             self.error = "Failed to load data: \(error.localizedDescription)"
         }
         
         isLoading = false
-        hasLoaded = true
     }
     
     private func calculateCalendarSchedules(schedules: [ScheduleWithSurah]) -> [Date: [ScheduleWithSurah]] {
@@ -120,25 +142,31 @@ class HomeViewModel: ObservableObject {
         return result
     }
     
-    func completeSession(scheduleId: UUID, performanceRating: PerformanceRating, notes: String?) async {
-        do {
-            lastCompleted = try await dataStore.createSession(
-                scheduleId: scheduleId,
-                performanceRating: performanceRating,
-                notes: notes
-            )
-            await loadData()
-        } catch {
-            self.error = "Failed to save session: \(error.localizedDescription)"
-        }
+    @discardableResult
+    func completeSession(scheduleId: UUID, performanceRating: PerformanceRating, notes: String?) async throws -> CompletedSession {
+        let completed = try await dataStore.createSession(
+            scheduleId: scheduleId,
+            performanceRating: performanceRating,
+            notes: notes
+        )
+        lastCompleted = completed
+        await loadData()
+        return completed
     }
-    
+
+    func createSchedule(surahId: Int, frequency: Frequency, isFullSurah: Bool, startPage: Int?, endPage: Int?) async throws {
+        try await dataStore.createSchedule(
+            surahId: Int16(surahId), frequency: frequency, isFullSurah: isFullSurah,
+            startPage: startPage.map { Int16($0) }, endPage: endPage.map { Int16($0) }
+        )
+        await loadData()
+    }
+
     func undoLastSession() async {
         guard let completed = lastCompleted else { return }
-        lastCompleted = nil
-        
         do {
             try await dataStore.undoSession(completed)
+            lastCompleted = nil
             await loadData()
         } catch {
             self.error = "Failed to undo session: \(error.localizedDescription)"

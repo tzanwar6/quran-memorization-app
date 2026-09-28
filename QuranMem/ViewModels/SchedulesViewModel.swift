@@ -44,19 +44,15 @@ class SchedulesViewModel: ObservableObject {
         isFullSurah: Bool,
         startPage: Int? = nil,
         endPage: Int? = nil
-    ) async {
-        do {
-            try await dataStore.createSchedule(
-                surahId: Int16(surahId),
-                frequency: frequency,
-                isFullSurah: isFullSurah,
-                startPage: startPage.map { Int16($0) },
-                endPage: endPage.map { Int16($0) }
-            )
-            await loadData()
-        } catch {
-            self.error = "Failed to create schedule: \(error.localizedDescription)"
-        }
+    ) async throws {
+        try await dataStore.createSchedule(
+            surahId: Int16(surahId),
+            frequency: frequency,
+            isFullSurah: isFullSurah,
+            startPage: startPage.map { Int16($0) },
+            endPage: endPage.map { Int16($0) }
+        )
+        await loadData()
     }
     
     func updateSchedule(id: UUID, frequency: Frequency?, nextDueDate: Date?, isActive: Bool?) async {

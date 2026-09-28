@@ -1,7 +1,12 @@
 import CoreData
 
 struct PersistenceController {
+    #if DEBUG
+    // UI tests use a disposable store and never change the installed app’s data.
+    static let shared = PersistenceController(inMemory: ProcessInfo.processInfo.arguments.contains("-ui-testing"))
+    #else
     static let shared = PersistenceController()
+    #endif
 
     // Loaded once so multiple containers (e.g. in-memory stores in tests) share the same
     // entity descriptions instead of registering duplicate NSManagedObject subclasses.

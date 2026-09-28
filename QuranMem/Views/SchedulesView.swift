@@ -79,7 +79,7 @@ struct SchedulesView: View {
                 surahs: viewModel.surahs,
                 isPresented: $showingSurahSelection
             ) { surahId, frequency, isFullSurah, startPage, endPage in
-                await viewModel.createSchedule(
+                try await viewModel.createSchedule(
                     surahId: surahId,
                     frequency: frequency,
                     isFullSurah: isFullSurah,
