@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
+    @ObservedObject private var lockManager = AppLockManager.shared
     let onManageSchedules: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var presentation: HomePresentation?
@@ -106,6 +107,9 @@ struct HomeView: View {
                     ProgressView().frame(maxWidth: .infinity).padding(.vertical, 32)
                 }
             } else if viewModel.dailySummary.state == .reviewsDue {
+                if case .locked = lockManager.status {
+                    RevisionLockBanner()
+                }
                 dailySummaryCard
                 Text("Ready to Review")
                     .font(.headline)
@@ -579,6 +583,30 @@ struct UndoBanner: View {
         }
         .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// Says why other apps are locked.
+private struct RevisionLockBanner: View {
+    var body: some View {
+        HStack(spacing: Metrics.card) {
+            Image(systemName: "lock.fill")
+                .font(.title3)
+                .foregroundStyle(Color.islamicGreen)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Apps are locked")
+                    .font(.subheadline.weight(.medium))
+                Text("They unlock when today’s reviews are logged.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(Metrics.gutter)
+        .cardSurface()
+        .accessibilityElement(children: .combine)
     }
 }
 

@@ -200,6 +200,17 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        // The shield can't open QuranMem itself, so it posts this notification for the user to tap.
+        if response.notification.request.identifier == LockNotification.identifier {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .showTodaysReviews, object: nil)
+            }
+        }
         completionHandler()
     }
+}
+
+extension Notification.Name {
+    /// Asks the app to bring the Home tab, with today's reviews, to the front.
+    static let showTodaysReviews = Notification.Name("showTodaysReviews")
 }

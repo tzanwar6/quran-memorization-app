@@ -1,6 +1,7 @@
 import Foundation
 import CoreData
 import Combine
+import FamilyControls
 
 @MainActor
 class SettingsViewModel: ObservableObject {
@@ -8,13 +9,24 @@ class SettingsViewModel: ObservableObject {
     @Published var notificationsEnabled = false
     @Published var showResetConfirmation = false
     @Published var error: String?
+    /// A rule of the permanent lock that stopped something. It's a notice, not a failure.
+    @Published var lockNotice: String?
+    /// True after the app picker came back with apps unticked that a permanent lock has to keep.
+    @Published private(set) var untickedAppsWereKept = false
 
     private let dataStore: DataStore
     private let notificationManager: NotificationManager
+    private let lockManager: AppLockManager
 
-    init(dataStore: DataStore = DataStore(), notificationManager: NotificationManager = .shared) {
+    init(
+        dataStore: DataStore = DataStore(),
+        notificationManager: NotificationManager = .shared,
+        lockManager: AppLockManager? = nil
+    ) {
         self.dataStore = dataStore
         self.notificationManager = notificationManager
+        // Default arguments are evaluated off the main actor, where `shared` isn't reachable.
+        self.lockManager = lockManager ?? .shared
         notificationsEnabled = notificationManager.remindersEnabled && notificationManager.isAuthorized
         notificationTime = Self.date(hour: notificationManager.reminderHour, minute: notificationManager.reminderMinute)
     }
@@ -48,6 +60,42 @@ class SettingsViewModel: ObservableObject {
         guard hour != notificationManager.reminderHour || minute != notificationManager.reminderMinute else { return }
 
         await notificationManager.setReminderTime(hour: hour, minute: minute)
+    }
+
+    func setLockEnabled(_ enabled: Bool) async {
+        do {
+            try await lockManager.setEnabled(enabled)
+        } catch FamilyControlsError.authorizationCanceled {
+            self.error = "Revision Lock needs Screen Time access to lock apps. Turn it on again and choose Continue when iOS asks."
+        } catch let error as LockError {
+            lockNotice = error.localizedDescription
+        } catch {
+            self.error = "Revision Lock couldn’t be turned on. \(error.localizedDescription) Check that Screen Time access is allowed for QuranMem in the iOS Settings app."
+        }
+    }
+
+    /// Called when the app picker closes. While the settings are fixed the lock keeps the apps it
+    /// already has, so anything unticked is put back.
+    func appsPicked(_ picked: FamilyActivitySelection) {
+        untickedAppsWereKept = lockManager.isFrozen
+            && !picked.union(lockManager.selection).hasSameTokens(as: picked)
+        lockManager.setSelection(picked)
+    }
+
+    func moveChangeWindow(toWeekday weekday: Int, hour: Int, minute: Int) {
+        do {
+            try lockManager.moveChangeWindow(toWeekday: weekday, hour: hour, minute: minute)
+        } catch {
+            lockNotice = error.localizedDescription
+        }
+    }
+
+    func askToResetAllData() {
+        if lockManager.isFrozen {
+            lockNotice = "Your data can’t be reset while the lock is permanent. You can do it during your weekly change window."
+        } else {
+            showResetConfirmation = true
+        }
     }
 
     func resetAllData() async {

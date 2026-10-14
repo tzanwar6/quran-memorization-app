@@ -39,6 +39,10 @@ struct QuranMemApp: App {
                     Task {
                         await notificationManager.refreshDailyReminder()
                     }
+                    // The lock window opens and closes by the clock, so check it on the same cue.
+                    Task {
+                        await AppLockManager.shared.refresh()
+                    }
                 }
         }
     }
@@ -87,6 +91,9 @@ struct ContentView: View {
         }
         .tint(.islamicGreen)
         .preferredColorScheme(preferredColorScheme)
+        .onReceive(NotificationCenter.default.publisher(for: .showTodaysReviews)) { _ in
+            selectedTab = .home
+        }
     }
 }
 

@@ -31,8 +31,10 @@ struct SchedulesView: View {
                                     currentState: schedule.isActive
                                 )
                             } onEdit: {
+                                guard !viewModel.blocksChange(to: schedule) else { return }
                                 scheduleToEdit = schedule
                             } onDelete: {
+                                guard !viewModel.blocksChange(to: schedule) else { return }
                                 scheduleToDelete = schedule
                                 showDeleteConfirmation = true
                             }
@@ -112,6 +114,7 @@ struct SchedulesView: View {
             Text(deleteMessage(for: schedule))
         }
         .errorAlert($viewModel.error)
+        .errorAlert($viewModel.lockNotice, title: "Log the Review First")
     }
 
     private func deleteMessage(for schedule: ScheduleWithSurah) -> String {
