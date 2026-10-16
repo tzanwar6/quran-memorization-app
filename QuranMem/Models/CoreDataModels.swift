@@ -16,7 +16,7 @@ extension SurahEntity {
 }
 
 extension ScheduleEntity {
-    func toScheduleWithSurah(surah: SurahEntity) -> ScheduleWithSurah {
+    func toScheduleWithSurah(surah: SurahEntity, hasBeenReviewed: Bool) -> ScheduleWithSurah {
         ScheduleWithSurah(
             id: id ?? UUID(),
             surahId: surahId,
@@ -28,7 +28,8 @@ extension ScheduleEntity {
             startPage: startPage == 0 ? nil : startPage,
             endPage: endPage == 0 ? nil : endPage,
             nextDueDate: nextDueDate ?? Date(),
-            isActive: isActive
+            isActive: isActive,
+            hasBeenReviewed: hasBeenReviewed
         )
     }
 }

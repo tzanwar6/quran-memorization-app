@@ -33,6 +33,41 @@ enum Frequency: String, CaseIterable, Codable {
         default: return nil
         }
     }
+
+    /// The rhythm a new schedule will follow, e.g. "First review today, then every Thursday."
+    func rhythmSummary(
+        firstReview: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current,
+        locale: Locale = .current
+    ) -> String {
+        let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        let first: String
+        if calendar.isDate(firstReview, inSameDayAs: now) {
+            first = "today"
+        } else if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+                  calendar.isDate(firstReview, inSameDayAs: tomorrow) {
+            first = "tomorrow"
+        } else {
+            first = firstReview.formatted(style.weekday(.abbreviated).month(.abbreviated).day())
+        }
+
+        let weekday = firstReview.formatted(style.weekday(.wide))
+        let ordinal = NumberFormatter()
+        ordinal.numberStyle = .ordinal
+        ordinal.locale = locale
+        let dayOfMonth = ordinal.string(from: NSNumber(value: calendar.component(.day, from: firstReview))) ?? ""
+
+        let then: String
+        switch self {
+        case .daily: then = "every day"
+        case .weekly: then = "every \(weekday)"
+        case .biweekly: then = "every other \(weekday)"
+        case .monthly: then = "on the \(dayOfMonth) of each month"
+        case .bimonthly: then = "on the \(dayOfMonth) of every other month"
+        }
+        return "First review \(first), then \(then)."
+    }
 }
 
 enum PerformanceRating: String, CaseIterable, Codable {
@@ -132,6 +167,9 @@ struct ScheduleWithSurah: Identifiable, Equatable {
     let endPage: Int16?
     let nextDueDate: Date
     let isActive: Bool
+    /// False until the first review is logged. Defaults to true so copies made for display
+    /// don't need to know.
+    var hasBeenReviewed = true
     
     var scopeDescription: String {
         if isFullSurah { return "Full Surah" }
@@ -146,13 +184,20 @@ struct ScheduleWithSurah: Identifiable, Equatable {
     var isDueToday: Bool {
         Calendar.current.isDateInToday(nextDueDate) || isOverdue
     }
+
+    /// Created with a start date that hasn't arrived yet.
+    var startsLater: Bool {
+        let calendar = Calendar.current
+        return !hasBeenReviewed && calendar.startOfDay(for: nextDueDate) > calendar.startOfDay(for: Date())
+    }
     
     static func == (lhs: ScheduleWithSurah, rhs: ScheduleWithSurah) -> Bool {
         lhs.id == rhs.id &&
         lhs.surahId == rhs.surahId &&
         lhs.frequency == rhs.frequency &&
         lhs.nextDueDate == rhs.nextDueDate &&
-        lhs.isActive == rhs.isActive
+        lhs.isActive == rhs.isActive &&
+        lhs.hasBeenReviewed == rhs.hasBeenReviewed
     }
 }
 

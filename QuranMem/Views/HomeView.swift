@@ -51,8 +51,8 @@ struct HomeView: View {
                 SurahSelectionView(surahs: viewModel.surahs, isPresented: Binding(
                     get: { presentation != nil },
                     set: { if !$0 { presentation = nil } }
-                )) { id, frequency, fullSurah, start, end in
-                    try await viewModel.createSchedule(surahId: id, frequency: frequency, isFullSurah: fullSurah, startPage: start, endPage: end)
+                )) { id, frequency, fullSurah, start, end, startsOn in
+                    try await viewModel.createSchedule(surahId: id, frequency: frequency, isFullSurah: fullSurah, startPage: start, endPage: end, startsOn: startsOn)
                 }
             }
         }

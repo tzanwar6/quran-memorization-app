@@ -80,13 +80,14 @@ struct SchedulesView: View {
             SurahSelectionView(
                 surahs: viewModel.surahs,
                 isPresented: $showingSurahSelection
-            ) { surahId, frequency, isFullSurah, startPage, endPage in
+            ) { surahId, frequency, isFullSurah, startPage, endPage, startsOn in
                 try await viewModel.createSchedule(
                     surahId: surahId,
                     frequency: frequency,
                     isFullSurah: isFullSurah,
                     startPage: startPage,
-                    endPage: endPage
+                    endPage: endPage,
+                    startsOn: startsOn
                 )
             }
         }
@@ -206,6 +207,9 @@ struct ScheduleListRow: View {
             Label("Overdue", systemImage: "exclamationmark.circle.fill")
                 .foregroundStyle(.red)
                 .fontWeight(.semibold)
+        } else if schedule.startsLater {
+            Text("Starts \(schedule.nextDueDate.formatted(.dateTime.month().day()))")
+                .foregroundStyle(.secondary)
         } else if Calendar.current.isDateInToday(schedule.nextDueDate) {
             Text("Due today")
                 .foregroundStyle(Color.islamicGreen)
@@ -247,7 +251,7 @@ struct EditFrequencyView: View {
                     }
                     .padding(.vertical, 4)
 
-                    LabeledContent("Next Due") {
+                    LabeledContent(schedule.startsLater ? "Starts" : "Next Due") {
                         Text(schedule.nextDueDate, format: .dateTime.weekday().month().day())
                     }
 

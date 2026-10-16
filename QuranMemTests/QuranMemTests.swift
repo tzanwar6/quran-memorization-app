@@ -145,6 +145,31 @@ struct RatingAdjustmentTests {
     }
 }
 
+// MARK: - Rhythm summary for a new schedule
+
+struct RhythmSummaryTests {
+    private let now = date(2026, 10, 15, hour: 20) // A Thursday.
+
+    private func summary(_ frequency: Frequency, startsOn: Date) -> String {
+        frequency.rhythmSummary(firstReview: startsOn, now: now, calendar: calendar, locale: Locale(identifier: "en_US"))
+    }
+
+    @Test func namesTodayAndTomorrow() {
+        #expect(summary(.daily, startsOn: now) == "First review today, then every day.")
+        #expect(summary(.weekly, startsOn: date(2026, 10, 16)) == "First review tomorrow, then every Friday.")
+    }
+
+    @Test func laterStartsShowTheDate() {
+        #expect(summary(.weekly, startsOn: date(2026, 10, 20)) == "First review Tue, Oct 20, then every Tuesday.")
+        #expect(summary(.biweekly, startsOn: date(2026, 10, 20)) == "First review Tue, Oct 20, then every other Tuesday.")
+    }
+
+    @Test func monthlyRhythmsNameTheDayOfTheMonth() {
+        #expect(summary(.monthly, startsOn: now) == "First review today, then on the 15th of each month.")
+        #expect(summary(.bimonthly, startsOn: date(2026, 11, 1)) == "First review Sun, Nov 1, then on the 1st of every other month.")
+    }
+}
+
 // MARK: - Overdue by a day (Keep Rhythm)
 
 /// A weekly review due Wed Oct 14 and completed a day late, on Thu Oct 15.
@@ -414,6 +439,58 @@ struct DataStoreTests {
         let completed = try await store.createSession(scheduleId: try #require(entity.id), performanceRating: .perfect)
 
         #expect(completed.nextDueDate == daysFromToday(6))
+    }
+
+    @Test func scheduleStartingTodayIsDueNow() async throws {
+        try await store.createSchedule(surahId: 1, frequency: .weekly, isFullSurah: true)
+
+        let created = try #require(try await store.getAllSchedules().first)
+        #expect(created.isDueToday)
+        #expect(!created.startsLater)
+        #expect(!created.hasBeenReviewed)
+        #expect(try await store.getTodaySchedules().count == 1)
+    }
+
+    @Test func scheduleStartingLaterWaitsForItsStartDate() async throws {
+        try await store.createSchedule(surahId: 1, frequency: .weekly, isFullSurah: true, startsOn: daysFromToday(5).addingTimeInterval(15 * 60 * 60))
+
+        let created = try #require(try await store.getAllSchedules().first)
+        #expect(created.nextDueDate == daysFromToday(5))
+        #expect(created.startsLater)
+        #expect(!created.isDueToday)
+        #expect(try await store.getTodaySchedules().isEmpty)
+    }
+
+    @Test func pastStartDateIsDueNowRatherThanOverdue() async throws {
+        try await store.createSchedule(surahId: 1, frequency: .weekly, isFullSurah: true, startsOn: daysFromToday(-3))
+
+        let created = try #require(try await store.getAllSchedules().first)
+        #expect(!created.isOverdue)
+        #expect(created.isDueToday)
+    }
+
+    @Test func firstReviewOnTheStartDateKeepsItsWeekday() async throws {
+        let startsOn = daysFromToday(3)
+        try await store.createSchedule(surahId: 1, frequency: .weekly, isFullSurah: true, startsOn: startsOn)
+        let id = try #require(try await store.getAllSchedules().first).id
+
+        let reviewTime = startsOn.addingTimeInterval(19 * 60 * 60)
+        let completed = try await store.createSession(scheduleId: id, performanceRating: .good, now: reviewTime)
+
+        #expect(completed.nextDueDate == Calendar.current.date(byAdding: .day, value: 7, to: startsOn))
+        let updated = try await schedule(id)
+        #expect(updated.hasBeenReviewed)
+        #expect(!updated.startsLater)
+    }
+
+    @Test func changingFrequencyBeforeTheStartKeepsTheStartDate() async throws {
+        let startsOn = daysFromToday(4)
+        try await store.createSchedule(surahId: 1, frequency: .weekly, isFullSurah: true, startsOn: startsOn)
+        let id = try #require(try await store.getAllSchedules().first).id
+
+        try await store.updateSchedule(id: id, frequency: .monthly)
+
+        #expect(try await schedule(id).nextDueDate == startsOn)
     }
 
     @Test func savingUnchangedFrequencyKeepsDueDate() async throws {

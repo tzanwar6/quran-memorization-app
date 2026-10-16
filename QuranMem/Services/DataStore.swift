@@ -60,10 +60,21 @@ class DataStore: ObservableObject {
 
         let schedules = try viewContext.fetch(request)
         let surahs = try surahsById()
+        let reviewed = try reviewedScheduleIds()
 
         return schedules.compactMap { schedule in
-            surahs[schedule.surahId].map { schedule.toScheduleWithSurah(surah: $0) }
+            surahs[schedule.surahId].map {
+                schedule.toScheduleWithSurah(surah: $0, hasBeenReviewed: schedule.id.map(reviewed.contains) ?? false)
+            }
         }
+    }
+
+    private func reviewedScheduleIds() throws -> Set<UUID> {
+        let request = NSFetchRequest<NSDictionary>(entityName: "SessionEntity")
+        request.resultType = .dictionaryResultType
+        request.propertiesToFetch = ["scheduleId"]
+        request.returnsDistinctResults = true
+        return Set(try viewContext.fetch(request).compactMap { $0["scheduleId"] as? UUID })
     }
 
     func getTodaySchedules() async throws -> [ScheduleWithSurah] {
@@ -84,7 +95,9 @@ class DataStore: ObservableObject {
         frequency: Frequency,
         isFullSurah: Bool,
         startPage: Int16? = nil,
-        endPage: Int16? = nil
+        endPage: Int16? = nil,
+        startsOn: Date = Date(),
+        now: Date = Date()
     ) async throws {
         let schedule = ScheduleEntity(context: viewContext)
         schedule.id = UUID()
@@ -93,10 +106,11 @@ class DataStore: ObservableObject {
         schedule.isFullSurah = isFullSurah
         schedule.startPage = startPage ?? 0
         schedule.endPage = endPage ?? 0
-        schedule.nextDueDate = Date()
+        // The first review is due on the start date; a start of today (or earlier) is due now.
+        schedule.nextDueDate = max(now, Calendar.current.startOfDay(for: startsOn))
         schedule.isActive = true
-        schedule.createdAt = Date()
-        schedule.updatedAt = Date()
+        schedule.createdAt = now
+        schedule.updatedAt = now
 
         do {
             try viewContext.save()

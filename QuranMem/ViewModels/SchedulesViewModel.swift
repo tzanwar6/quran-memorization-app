@@ -64,14 +64,16 @@ class SchedulesViewModel: ObservableObject {
         frequency: Frequency,
         isFullSurah: Bool,
         startPage: Int? = nil,
-        endPage: Int? = nil
+        endPage: Int? = nil,
+        startsOn: Date = Date()
     ) async throws {
         try await dataStore.createSchedule(
             surahId: Int16(surahId),
             frequency: frequency,
             isFullSurah: isFullSurah,
             startPage: startPage.map { Int16($0) },
-            endPage: endPage.map { Int16($0) }
+            endPage: endPage.map { Int16($0) },
+            startsOn: startsOn
         )
         await loadData()
     }

@@ -3,7 +3,7 @@ import SwiftUI
 struct SurahSelectionView: View {
     let surahs: [Surah]
     @Binding var isPresented: Bool
-    let onCreate: (Int, Frequency, Bool, Int?, Int?) async throws -> Void
+    let onCreate: (Int, Frequency, Bool, Int?, Int?, Date) async throws -> Void
 
     @State private var searchText = ""
     @State private var selectedSurah: Surah?
@@ -47,8 +47,8 @@ struct SurahSelectionView: View {
                 }
             }
             .navigationDestination(item: $selectedSurah) { surah in
-                ScheduleConfigurationView(surah: surah) { frequency, isFullSurah, startPage, endPage in
-                    try await onCreate(surah.id, frequency, isFullSurah, startPage, endPage)
+                ScheduleConfigurationView(surah: surah) { frequency, isFullSurah, startPage, endPage, startsOn in
+                    try await onCreate(surah.id, frequency, isFullSurah, startPage, endPage, startsOn)
                     isPresented = false
                 }
             }
@@ -60,9 +60,10 @@ struct SurahSelectionView: View {
 /// the back button and the title say where you are.
 struct ScheduleConfigurationView: View {
     let surah: Surah
-    let onCreate: (Frequency, Bool, Int?, Int?) async throws -> Void
+    let onCreate: (Frequency, Bool, Int?, Int?, Date) async throws -> Void
 
     @State private var frequency: Frequency = .daily
+    @State private var startsOn = Date()
     @State private var isFullSurah = true
     @State private var startPage = ""
     @State private var endPage = ""
@@ -120,10 +121,13 @@ struct ScheduleConfigurationView: View {
                         Text(freq.displayName).tag(freq)
                     }
                 }
+
+                DatePicker("Starts", selection: $startsOn, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                    .tint(.islamicGreen)
             } header: {
-                Text("Review Frequency")
+                Text("Review Rhythm")
             } footer: {
-                Text("How often this passage comes back for review.")
+                Text(frequency.rhythmSummary(firstReview: startsOn))
             }
 
             Section {
@@ -165,7 +169,7 @@ struct ScheduleConfigurationView: View {
                     Task {
                         defer { isCreating = false }
                         do {
-                            try await onCreate(frequency, isFullSurah, Int(startPage), Int(endPage))
+                            try await onCreate(frequency, isFullSurah, Int(startPage), Int(endPage), startsOn)
                         } catch {
                             self.error = "\(error.localizedDescription) Your choices are still here; please try again."
                         }

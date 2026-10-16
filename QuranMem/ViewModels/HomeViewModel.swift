@@ -119,7 +119,8 @@ class HomeViewModel: ObservableObject {
                     startPage: schedule.startPage,
                     endPage: schedule.endPage,
                     nextDueDate: dueDateForCell,
-                    isActive: schedule.isActive
+                    isActive: schedule.isActive,
+                    hasBeenReviewed: schedule.hasBeenReviewed
                 )
                 
                 result[dateKey]?.append(scheduleForDate)
@@ -154,10 +155,10 @@ class HomeViewModel: ObservableObject {
         return completed
     }
 
-    func createSchedule(surahId: Int, frequency: Frequency, isFullSurah: Bool, startPage: Int?, endPage: Int?) async throws {
+    func createSchedule(surahId: Int, frequency: Frequency, isFullSurah: Bool, startPage: Int?, endPage: Int?, startsOn: Date) async throws {
         try await dataStore.createSchedule(
             surahId: Int16(surahId), frequency: frequency, isFullSurah: isFullSurah,
-            startPage: startPage.map { Int16($0) }, endPage: endPage.map { Int16($0) }
+            startPage: startPage.map { Int16($0) }, endPage: endPage.map { Int16($0) }, startsOn: startsOn
         )
         await loadData()
     }
