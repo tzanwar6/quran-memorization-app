@@ -26,7 +26,7 @@ QuranMem is a native iOS application designed to help Muslims memorize and retai
 - Choose from multiple review frequencies (daily, weekly, bi-weekly, monthly, bi-monthly)
 - Schedule full Surahs or specific page ranges
 - Activate/deactivate schedules as needed
-- Reviews adapt to your performance: a Poor rating brings a review back after about half its interval, and Very Poor makes it due tomorrow (can be turned off)
+- Reviews adapt to your performance: a Poor rating brings a review back after about half its interval, and Very Poor makes it due tomorrow (off by default; turn it on in Settings)
 - Choose how overdue reviews are rescheduled: keep their original rhythm (e.g. the same weekday) or restart the interval from the day you complete them
 
 ### 📊 Progress Tracking

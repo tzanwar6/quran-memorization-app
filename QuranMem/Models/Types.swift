@@ -110,7 +110,7 @@ struct SchedulingPreferences: Equatable {
     var adjustForRating: Bool
     var overduePolicy: OverduePolicy
     
-    static let `default` = SchedulingPreferences(adjustForRating: true, overduePolicy: .keepRhythm)
+    static let `default` = SchedulingPreferences(adjustForRating: false, overduePolicy: .keepRhythm)
     
     static func load(from defaults: UserDefaults = .standard) -> SchedulingPreferences {
         let adjustForRating = defaults.object(forKey: adjustForRatingKey) as? Bool ?? Self.default.adjustForRating

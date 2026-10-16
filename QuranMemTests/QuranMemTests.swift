@@ -145,6 +145,83 @@ struct RatingAdjustmentTests {
     }
 }
 
+// MARK: - Overdue by a day (Keep Rhythm)
+
+/// A weekly review due Wed Oct 14 and completed a day late, on Thu Oct 15.
+struct OverdueByOneDayTests {
+    private let due = date(2026, 10, 14)
+    private let now = date(2026, 10, 15, hour: 20)
+
+    private func next(
+        _ frequency: Frequency = .weekly,
+        due: Date? = nil,
+        rating: PerformanceRating = .good,
+        policy: OverduePolicy = .keepRhythm,
+        adjust: Bool = true,
+        now: Date? = nil,
+        calendar: Calendar = calendar
+    ) -> Date {
+        ReviewEngine.nextDueDateAfterCompletion(
+            frequency: frequency,
+            currentDueDate: due ?? self.due,
+            rating: rating,
+            preferences: SchedulingPreferences(adjustForRating: adjust, overduePolicy: policy),
+            now: now ?? self.now,
+            calendar: calendar
+        )
+    }
+
+    @Test func goodOrBetterKeepsTheWeekday() {
+        for rating in [PerformanceRating.perfect, .veryGood, .good] {
+            #expect(next(rating: rating) == day(2026, 10, 21))
+        }
+    }
+
+    @Test func restartFromTodayCountsFromCompletion() {
+        #expect(next(policy: .restartFromCompletion) == day(2026, 10, 22))
+    }
+
+    @Test func poorRatingComesBackInHalfAWeek() {
+        // Half of 7 days from Oct 15, which is sooner than the rhythm date Oct 21.
+        #expect(next(rating: .poor) == day(2026, 10, 18))
+        #expect(next(rating: .poor, adjust: false) == day(2026, 10, 21))
+    }
+
+    @Test func veryPoorRatingIsDueTomorrow() {
+        #expect(next(rating: .veryPoor) == day(2026, 10, 16))
+        #expect(next(rating: .veryPoor, adjust: false) == day(2026, 10, 21))
+    }
+
+    @Test func timeOfDayOnEitherDateDoesNotMatter() {
+        // Created just before midnight, completed just after.
+        #expect(next(due: date(2026, 10, 14, hour: 23), now: date(2026, 10, 15, hour: 0)) == day(2026, 10, 21))
+        #expect(next(due: date(2026, 10, 14, hour: 0), now: date(2026, 10, 15, hour: 23)) == day(2026, 10, 21))
+    }
+
+    @Test func otherFrequenciesStepFromTheMissedDate() {
+        #expect(next(.daily) == day(2026, 10, 16))
+        #expect(next(.biweekly) == day(2026, 10, 28))
+        #expect(next(.monthly) == day(2026, 11, 14))
+        #expect(next(.bimonthly) == day(2026, 12, 14))
+    }
+
+    @Test func missingSeveralWeeksSkipsToTheNextSameWeekday() {
+        // Due Sep 30 (a Wednesday): Oct 7 and Oct 14 have passed, so Oct 21.
+        #expect(next(due: date(2026, 9, 30)) == day(2026, 10, 21))
+    }
+
+    @Test func worksInATimeZoneWithDaylightSaving() {
+        // Daylight saving ends Nov 1 in New York; a weekly review must not slip a day across it.
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        func local(_ month: Int, _ day: Int, hour: Int = 9) -> Date {
+            newYork.date(from: DateComponents(year: 2026, month: month, day: day, hour: hour))!
+        }
+        #expect(next(due: local(10, 14), now: local(10, 15), calendar: newYork) == local(10, 21, hour: 0))
+        #expect(next(due: local(10, 28), now: local(10, 29), calendar: newYork) == local(11, 4, hour: 0))
+    }
+}
+
 // MARK: - Reminders
 
 struct ReminderPlannerTests {
@@ -317,6 +394,28 @@ struct DataStoreTests {
         #expect(Calendar.current.startOfDay(for: updated.nextDueDate) == daysFromToday(1))
     }
 
+    @Test func weeklyReviewCompletedADayLateKeepsItsWeekday() async throws {
+        let id = try await createSchedule(frequency: .weekly, nextDueDate: daysFromToday(-1))
+
+        let completed = try await store.createSession(scheduleId: id, performanceRating: .good)
+
+        #expect(completed.nextDueDate == daysFromToday(6))
+        #expect(try await schedule(id).nextDueDate == daysFromToday(6))
+    }
+
+    @Test func newScheduleCompletedTheNextDayKeepsItsWeekday() async throws {
+        // A new schedule is due the day it's created; this one is logged the following day.
+        let createdAt = daysFromToday(-1).addingTimeInterval(20 * 60 * 60)
+        try await store.createSchedule(surahId: 1, frequency: .weekly, isFullSurah: true)
+        let entity = try #require(try context.fetch(ScheduleEntity.fetchRequest()).first)
+        entity.nextDueDate = createdAt
+        try context.save()
+
+        let completed = try await store.createSession(scheduleId: try #require(entity.id), performanceRating: .perfect)
+
+        #expect(completed.nextDueDate == daysFromToday(6))
+    }
+
     @Test func savingUnchangedFrequencyKeepsDueDate() async throws {
         let dueDate = daysFromToday(3)
         let id = try await createSchedule(frequency: .weekly, nextDueDate: dueDate)
@@ -341,7 +440,19 @@ struct DataStoreTests {
         #expect(stats.longestStreak == 1)
     }
 
-    @Test func poorRatingBringsReviewBackSooner() async throws {
+    @Test func ratingsLeaveTheScheduleAloneByDefault() async throws {
+        #expect(!SchedulingPreferences.default.adjustForRating)
+        #expect(SchedulingPreferences.load(from: UserDefaults(suiteName: "empty-\(UUID())")!) == .default)
+
+        let id = try await createSchedule(frequency: .weekly, nextDueDate: daysFromToday(0))
+
+        let completed = try await store.createSession(scheduleId: id, performanceRating: .veryPoor)
+
+        #expect(completed.nextDueDate == daysFromToday(7))
+    }
+
+    @Test func poorRatingBringsReviewBackSoonerWhenTurnedOn() async throws {
+        let store = DataStore(context: context, preferences: { SchedulingPreferences(adjustForRating: true, overduePolicy: .keepRhythm) })
         let id = try await createSchedule(frequency: .weekly, nextDueDate: daysFromToday(0))
 
         let completed = try await store.createSession(scheduleId: id, performanceRating: .veryPoor)
