@@ -38,6 +38,7 @@ struct MemorizationSessionView: View {
                     submitSession()
                 }
             }
+            .ignoresKeyboardSafeAreaWhenHidden()
         }
         .interactiveDismissDisabled(isSubmitting || hasDraft)
         .errorAlert($error, title: "Review Not Saved")

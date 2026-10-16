@@ -45,4 +45,30 @@ extension View {
             Text(message.wrappedValue ?? "")
         }
     }
+
+    /// Keeps a `safeAreaInset` bar on the bottom edge whenever the keyboard is
+    /// hidden. SwiftUI can go on reserving the keyboard's height after it has
+    /// gone — after an interactive dismissal in a sheet, or with Reduce Motion's
+    /// cross-fade — leaving the bar floating mid-screen. UIKit's show and hide
+    /// notifications stay reliable, so the keyboard region only counts between them.
+    func ignoresKeyboardSafeAreaWhenHidden() -> some View {
+        modifier(KeyboardSafeAreaWhenHidden())
+    }
+}
+
+private struct KeyboardSafeAreaWhenHidden: ViewModifier {
+    @State private var isKeyboardShown = false
+
+    func body(content: Content) -> some View {
+        content
+            .ignoresSafeArea(.keyboard, edges: isKeyboardShown ? [] : .bottom)
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                withAnimation(.smooth(duration: 0.25)) { isKeyboardShown = true }
+            }
+            // Did, not will: a working inset has already dropped by then, so this
+            // only moves anything when the inset got stuck.
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+                withAnimation(.smooth(duration: 0.25)) { isKeyboardShown = false }
+            }
+    }
 }

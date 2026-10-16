@@ -61,6 +61,7 @@ struct ReviewQueueView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) { actionBar }
+            .ignoresKeyboardSafeAreaWhenHidden()
         }
         .interactiveDismissDisabled(viewModel.isSubmitting || viewModel.hasDraft)
         .errorAlert($viewModel.error, title: "Review Not Saved")
