@@ -31,6 +31,7 @@ struct LockStore {
     static let appGroup = "group.com.tahaanwar.QuranMem"
 
     private enum Key {
+        static let prefix = "revisionLock."
         static let isEnabled = "revisionLock.isEnabled"
         static let dueDates = "revisionLock.dueDates"
         static let selection = "revisionLock.selection"
@@ -94,6 +95,27 @@ struct LockStore {
             dueDates: dueDates,
             commitment: commitment
         )
+    }
+
+    /// Builds without the App Group entitlement kept these values in the app's own preferences,
+    /// where the extensions can't read them. Copies them into the App Group the first time.
+    static func moveIntoAppGroup(fileManager: FileManager = .default) {
+        // Without the entitlement the suite below is that same old file, so there's nothing to move.
+        guard fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroup) != nil,
+              let shared = UserDefaults(suiteName: appGroup),
+              let library = fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+        let oldFile = library.appending(path: "Preferences/\(appGroup).plist")
+        guard let data = try? Data(contentsOf: oldFile),
+              let old = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return }
+        // Anything already in the App Group was written since, so it wins.
+        let isFresh = !shared.dictionaryRepresentation().keys.contains { $0.hasPrefix(Key.prefix) }
+        if isFresh {
+            for (key, value) in old where key.hasPrefix(Key.prefix) {
+                shared.set(value, forKey: key)
+            }
+        }
+        try? fileManager.removeItem(at: oldFile)
     }
 }
 

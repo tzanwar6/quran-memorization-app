@@ -48,6 +48,7 @@ final class AppLockManager: ObservableObject {
             try await DataStore().getAllSchedules()
         }
     ) {
+        LockStore.moveIntoAppGroup()
         self.store = store
         self.scheduleProvider = scheduleProvider
         status = LockPolicy.status(state: store.state)
@@ -112,6 +113,7 @@ final class AppLockManager: ObservableObject {
 
     /// Midnight can bring new reviews, and the weekly change window opens and closes by the clock.
     /// Nothing is saved at those moments, so wake up for the next one while the app is open.
+    /// When it isn't, the monitor extension locks the apps at midnight.
     private func scheduleWake() {
         wakeTask?.cancel()
         guard let nextChange = LockPolicy.nextChange(state: store.state) else { return }
