@@ -6,11 +6,18 @@ struct ProgressTabView: View {
     @StateObject private var viewModel = ProgressViewModel()
     @State private var selectedTab = 0
     @State private var sessionToEdit: SessionWithSchedule?
+    @State private var selectedJuz: JuzSelection?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: Metrics.section) {
+                    if !viewModel.pageStates.isEmpty {
+                        QuranProgressMap(states: viewModel.pageStates, planToday: viewModel.planToday) { juz in
+                            selectedJuz = JuzSelection(juz: juz)
+                        }
+                    }
+
                     if let stats = viewModel.stats {
                         overviewSection(stats)
                     } else if viewModel.isLoading {
@@ -46,15 +53,31 @@ struct ProgressTabView: View {
             }
         }
         .sheet(item: $sessionToEdit) { session in
-            SessionEditView(
-                session: session,
-                onSave: { rating, notes in
-                    await viewModel.updateSession(id: session.id, performanceRating: rating, notes: notes)
-                },
-                onDelete: {
-                    await viewModel.deleteSession(id: session.id)
-                }
-            )
+            if viewModel.isRecentReview(session) {
+                SessionEditView(
+                    session: session,
+                    footnote: "Editing or deleting a past recent review updates your stats. Anything that has already moved to revision stays there.",
+                    onSave: { rating, notes in
+                        await viewModel.updateRecentReview(id: session.id, performanceRating: rating, notes: notes)
+                    },
+                    onDelete: {
+                        await viewModel.deleteRecentReview(id: session.id)
+                    }
+                )
+            } else {
+                SessionEditView(
+                    session: session,
+                    onSave: { rating, notes in
+                        await viewModel.updateSession(id: session.id, performanceRating: rating, notes: notes)
+                    },
+                    onDelete: {
+                        await viewModel.deleteSession(id: session.id)
+                    }
+                )
+            }
+        }
+        .sheet(item: $selectedJuz) { selection in
+            JuzDetailView(juz: selection.juz, states: viewModel.pageStates, surahs: viewModel.surahs)
         }
         .errorAlert($viewModel.error)
     }
@@ -152,7 +175,7 @@ struct ProgressTabView: View {
             VStack(spacing: 10) {
                 ForEach(viewModel.performanceBreakdown, id: \.0) { rating, count in
                     // Use the same sessions for the total as for the counts so the bars add up.
-                    PerformanceBar(rating: rating, count: count, total: viewModel.sessions.count)
+                    PerformanceBar(rating: rating, count: count, total: viewModel.ratedSessions.count)
                 }
             }
             .padding(Metrics.gutter)
@@ -162,7 +185,7 @@ struct ProgressTabView: View {
 
     private var historySection: some View {
         VStack(alignment: .leading, spacing: Metrics.section) {
-            if viewModel.sessions.isEmpty {
+            if viewModel.historyGroupedByDate.isEmpty {
                 if viewModel.isLoading {
                     ProgressView()
                         .frame(maxWidth: .infinity)
@@ -176,24 +199,34 @@ struct ProgressTabView: View {
                     .padding(.vertical, 32)
                 }
             } else {
-                ForEach(viewModel.sessionsGroupedByDate, id: \.0) { date, sessions in
+                ForEach(viewModel.historyGroupedByDate, id: \.0) { date, items in
                     VStack(alignment: .leading, spacing: Metrics.card) {
                         SectionHeader(title: date.formatted(.dateTime.weekday(.wide).month().day()))
 
-                        ForEach(sessions) { session in
-                            Button {
-                                sessionToEdit = session
-                            } label: {
-                                SessionHistoryRow(session: session)
+                        ForEach(items) { item in
+                            switch item {
+                            case .rated(let session):
+                                Button {
+                                    sessionToEdit = session
+                                } label: {
+                                    SessionHistoryRow(session: session)
+                                }
+                                .buttonStyle(.card)
+                                .accessibilityHint("Opens the session to edit or delete it")
+                            case .lesson(let lessons):
+                                LessonHistoryRow(lessons: lessons)
                             }
-                            .buttonStyle(.card)
-                            .accessibilityHint("Opens the session to edit or delete it")
                         }
                     }
                 }
             }
         }
     }
+}
+
+private struct JuzSelection: Identifiable {
+    let juz: Int
+    var id: Int { juz }
 }
 
 struct ProgressStatCard: View {
@@ -263,6 +296,51 @@ struct PerformanceBar: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(rating.displayName): \(count) of \(total) sessions")
+    }
+}
+
+/// A new lesson in History. Lessons have no rating and can't be edited here.
+struct LessonHistoryRow: View {
+    let lessons: [HifzLesson]
+
+    private var halves: [HalfPage] { lessons.map(\.halfPage).sorted() }
+    private var notes: String? { lessons.lazy.compactMap(\.notes).first }
+
+    var body: some View {
+        HStack(spacing: Metrics.card) {
+            Image(systemName: "book.fill")
+                .font(.footnote)
+                .foregroundStyle(Color.islamicGreen)
+                .frame(width: 34, height: 34)
+                .background(Color.islamicGreen.opacity(0.12), in: .circle)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("New lesson")
+                    .font(.subheadline.weight(.medium))
+
+                Text(halves.portionDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let notes, !notes.isEmpty {
+                    Text(notes)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let date = lessons.first?.memorizedAt {
+                Text(date, style: .time)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(Metrics.card)
+        .cardSurface()
+        .accessibilityElement(children: .combine)
     }
 }
 

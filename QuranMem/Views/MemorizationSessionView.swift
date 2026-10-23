@@ -82,16 +82,7 @@ struct SessionRatingContent: View {
         VStack(alignment: .leading, spacing: Metrics.card) {
             SectionHeader(title: "How did it go?")
 
-            VStack(spacing: 8) {
-                ForEach(PerformanceRating.allCases, id: \.self) { rating in
-                    RatingButton(
-                        rating: rating,
-                        isSelected: selectedRating == rating
-                    ) {
-                        selectedRating = rating
-                    }
-                }
-            }
+            RatingChoices(selectedRating: $selectedRating)
 
             if adjustForRating {
                 Text(ratingScheduleHint)
@@ -127,61 +118,99 @@ struct SessionRatingContent: View {
 
 struct ReviewPassageCard: View {
     let schedule: ScheduleWithSurah
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    var body: some View { scheduleInfoCard }
 
-    private var scheduleInfoCard: some View {
+    var body: some View {
+        PassageCard(
+            symbol: "book.fill",
+            title: schedule.surahArabicName,
+            subtitle: schedule.surahEnglishName,
+            details: [
+                PassageCard.Detail(
+                    text: schedule.isFullSurah
+                        ? "Full Surah (\(schedule.verseCount) verses)"
+                        : "Pages \(schedule.startPage ?? 0)–\(schedule.endPage ?? 0)",
+                    symbol: "doc.text"
+                ),
+                PassageCard.Detail(text: schedule.frequency.displayName, symbol: "calendar", isAccent: true),
+            ]
+        )
+    }
+}
+
+/// The card at the top of a review or lesson: what to recite, and a line of details under a divider.
+struct PassageCard: View {
+    struct Detail: Hashable {
+        let text: String
+        let symbol: String
+        var isAccent = false
+    }
+
+    let symbol: String
+    let title: String
+    let subtitle: String
+    let details: [Detail]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
         VStack(alignment: .leading, spacing: Metrics.card) {
             HStack(spacing: Metrics.card) {
                 if !dynamicTypeSize.isAccessibilitySize {
-                    Image(systemName: "book.fill")
+                    Image(systemName: symbol)
                         .font(.title3)
                         .foregroundStyle(Color.islamicGreen)
                         .frame(width: Metrics.minTarget, height: Metrics.minTarget)
                         .background(Color.islamicGreen.opacity(0.12), in: .circle)
                         .accessibilityHidden(true)
-
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(schedule.surahArabicName)
+                    Text(title)
                         .font(.title3.weight(.semibold))
 
-                    Text(schedule.surahEnglishName)
+                    Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Divider()
+            if !details.isEmpty {
+                Divider()
 
-            ViewThatFits(in: .horizontal) {
-                HStack { scopeLabels }
-                VStack(alignment: .leading, spacing: 6) { scopeLabels }
+                ViewThatFits(in: .horizontal) {
+                    HStack { detailLabels }
+                    VStack(alignment: .leading, spacing: 6) { detailLabels }
+                }
+                .font(.subheadline)
             }
-            .font(.subheadline)
         }
         .padding(Metrics.gutter)
         .cardSurface()
     }
 
     @ViewBuilder
-    private var scopeLabels: some View {
-        Label(
-            schedule.isFullSurah
-                ? "Full Surah (\(schedule.verseCount) verses)"
-                : "Pages \(schedule.startPage ?? 0)–\(schedule.endPage ?? 0)",
-            systemImage: "doc.text"
-        )
-        .foregroundStyle(.secondary)
-
-        Spacer(minLength: 0)
-
-        Label(schedule.frequency.displayName, systemImage: "calendar")
-            .foregroundStyle(Color.islamicGreen)
+    private var detailLabels: some View {
+        ForEach(Array(details.enumerated()), id: \.offset) { index, detail in
+            if index > 0 { Spacer(minLength: 0) }
+            Label(detail.text, systemImage: detail.symbol)
+                .foregroundStyle(detail.isAccent ? Color.islamicGreen : .secondary)
+        }
     }
+}
 
+/// The five ratings, one button each.
+struct RatingChoices: View {
+    @Binding var selectedRating: PerformanceRating?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(PerformanceRating.allCases, id: \.self) { rating in
+                RatingButton(rating: rating, isSelected: selectedRating == rating) {
+                    selectedRating = rating
+                }
+            }
+        }
+    }
 }
 
 /// A text area that matches the surrounding card surfaces and shows a prompt

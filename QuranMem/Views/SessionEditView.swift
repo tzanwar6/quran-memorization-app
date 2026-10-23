@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SessionEditView: View {
     let session: SessionWithSchedule
+    var footnote = "Editing or deleting a past session updates your stats but doesn't move the schedule's due date. To change the date, edit the schedule."
     let onSave: (PerformanceRating, String?) async -> Void
     let onDelete: () async -> Void
 
@@ -13,10 +14,12 @@ struct SessionEditView: View {
 
     init(
         session: SessionWithSchedule,
+        footnote: String? = nil,
         onSave: @escaping (PerformanceRating, String?) async -> Void,
         onDelete: @escaping () async -> Void
     ) {
         self.session = session
+        if let footnote { self.footnote = footnote }
         self.onSave = onSave
         self.onDelete = onDelete
         self._selectedRating = State(initialValue: session.performanceRating)
@@ -41,13 +44,10 @@ struct SessionEditView: View {
                     VStack(alignment: .leading, spacing: Metrics.card) {
                         SectionHeader(title: "Rating")
 
-                        VStack(spacing: 8) {
-                            ForEach(PerformanceRating.allCases, id: \.self) { rating in
-                                RatingButton(rating: rating, isSelected: selectedRating == rating) {
-                                    selectedRating = rating
-                                }
-                            }
-                        }
+                        RatingChoices(selectedRating: Binding(
+                            get: { selectedRating },
+                            set: { if let rating = $0 { selectedRating = rating } }
+                        ))
                     }
 
                     VStack(alignment: .leading, spacing: Metrics.card) {
@@ -55,7 +55,7 @@ struct SessionEditView: View {
                         NotesEditor(text: $notes, placeholder: "Anything worth remembering")
                     }
 
-                    Text("Editing or deleting a past session updates your stats but doesn't move the schedule's due date. To change the date, edit the schedule.")
+                    Text(footnote)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
 

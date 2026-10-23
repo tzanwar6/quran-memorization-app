@@ -13,11 +13,31 @@ class HomeViewModel: ObservableObject {
     @Published private(set) var hasLoaded = false
     @Published private(set) var loadFailed = false
     @Published var error: String?
-    /// The most recently completed session, while it can still be undone.
-    @Published var lastCompleted: CompletedSession?
+    /// The most recently saved review or lesson, while it can still be undone.
+    @Published var lastCompleted: UndoableAction?
+    /// The memorization plan that's under way, paused or not.
+    @Published private(set) var plan: HifzPlan?
+    @Published private(set) var lessons: [HifzLesson] = []
+    @Published private(set) var recentReviews: [HifzReview] = []
+    /// Set when today's load moved settled lessons into revision.
+    @Published var movedToRevision: MovedToRevision?
     
     var dailySummary: DailyReviewSummary {
         DailyReviewSummary(schedules: allSchedules, sessions: sessions)
+    }
+
+    var hifzToday: HifzToday? {
+        plan.map { HifzToday(plan: $0, lessons: lessons, reviews: recentReviews) }
+    }
+
+    /// The latest note from a recent review of the current plan.
+    var previousRecentReviewNote: String? {
+        recentReviews
+            .filter { $0.planId == plan?.id }
+            .sorted { $0.completedAt > $1.completedAt }
+            .lazy
+            .compactMap { $0.notes?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
     }
 
     var previousNotes: [UUID: String] {
@@ -33,10 +53,16 @@ class HomeViewModel: ObservableObject {
 
     private let dataStore: DataStore
     private let notificationManager: NotificationManager
+    private let isPlanHeldByLock: @MainActor (HifzToday) -> Bool
     
-    init(dataStore: DataStore = DataStore(), notificationManager: NotificationManager = .shared) {
+    init(
+        dataStore: DataStore = DataStore(),
+        notificationManager: NotificationManager = .shared,
+        isPlanHeldByLock: @escaping @MainActor (HifzToday) -> Bool = { AppLockManager.shared.holdsPlan($0) }
+    ) {
         self.dataStore = dataStore
         self.notificationManager = notificationManager
+        self.isPlanHeldByLock = isPlanHeldByLock
     }
     
     func loadData() async {
@@ -46,14 +72,30 @@ class HomeViewModel: ObservableObject {
         isLoading = true
         error = nil
         
+        // Settled lessons move to revision before today's queue is built. A failure here
+        // shouldn't keep the rest of Home from loading; the next load tries again.
+        do {
+            if let moved = try await dataStore.graduateReadyLessons() {
+                movedToRevision = moved
+            }
+        } catch {
+            print("Error moving lessons to revision: \(error)")
+        }
+
         do {
             let schedules = try await dataStore.getAllSchedules()
             let sessions = try await dataStore.getRecentSessions()
             let surahs = try await dataStore.getAllSurahs()
+            let plan = try await dataStore.getCurrentPlan()
+            let lessons = try await dataStore.getAllLessons()
+            let recentReviews = try await dataStore.getAllRecentReviews()
             // Publish one complete snapshot only after every fetch succeeds.
             self.allSchedules = schedules
             self.sessions = sessions
             self.surahs = surahs
+            self.plan = plan
+            self.lessons = lessons
+            self.recentReviews = recentReviews
             self.todaySchedules = DailyReviewSummary(schedules: schedules, sessions: sessions).remaining
             calendarSchedules = calculateCalendarSchedules(schedules: schedules)
             hasLoaded = true
@@ -120,7 +162,8 @@ class HomeViewModel: ObservableObject {
                     endPage: schedule.endPage,
                     nextDueDate: dueDateForCell,
                     isActive: schedule.isActive,
-                    hasBeenReviewed: schedule.hasBeenReviewed
+                    hasBeenReviewed: schedule.hasBeenReviewed,
+                    hifzPlanId: schedule.hifzPlanId
                 )
                 
                 result[dateKey]?.append(scheduleForDate)
@@ -150,7 +193,7 @@ class HomeViewModel: ObservableObject {
             performanceRating: performanceRating,
             notes: notes
         )
-        lastCompleted = completed
+        lastCompleted = .revision(completed)
         await loadData()
         return completed
     }
@@ -164,24 +207,94 @@ class HomeViewModel: ObservableObject {
     }
 
     func undoLastSession() async {
-        guard let completed = lastCompleted else { return }
+        guard let action = lastCompleted else { return }
         do {
-            try await dataStore.undoSession(completed)
+            switch action {
+            case .revision(let completed):
+                try await dataStore.undoSession(completed)
+            case .lesson(let ids, _):
+                try await dataStore.undoMemorize(lessonIds: ids)
+            case .recentReview(let id, _):
+                try await dataStore.deleteRecentReview(id: id)
+            }
             lastCompleted = nil
             await loadData()
         } catch {
-            self.error = "Failed to undo session: \(error.localizedDescription)"
+            self.error = "Failed to undo: \(error.localizedDescription)"
         }
     }
     
-    func dismissUndo(for completed: CompletedSession) {
-        if lastCompleted == completed {
+    func dismissUndo(for action: UndoableAction) {
+        if lastCompleted == action {
             lastCompleted = nil
+        }
+    }
+
+    // MARK: - Memorization plan
+
+    /// Starts a plan. With `replacingCurrent`, a plan still under way is ended first, its unsettled
+    /// portions moving to revision.
+    func createPlan(_ draft: HifzPlanDraft, replacingCurrent: Bool = false) async throws {
+        if replacingCurrent, let plan {
+            if let hifzToday, isPlanHeldByLock(hifzToday) { throw LockError.planHeld }
+            movedToRevision = try await dataStore.endPlan(id: plan.id)
+        }
+        try await dataStore.createPlan(
+            title: draft.title, startPage: draft.startPage, endPage: draft.endPage, halvesPerDay: draft.halvesPerDay,
+            lessonWeekdays: draft.lessonWeekdays, recentReviewCount: draft.recentReviewCount,
+            revisionFrequency: draft.revisionFrequency
+        )
+        await loadData()
+    }
+
+    /// The surahs on these pages, in mushaf order: "Al-Haqqah, Al-Ma'arij".
+    func surahNames(onPages pages: [Int]) -> String {
+        var ids = Set<Int>()
+        return Set(pages).sorted()
+            .flatMap { QuranPages.surahs(onPage: $0, in: surahs) }
+            .filter { ids.insert($0.id).inserted }
+            .map(\.englishName)
+            .joined(separator: ", ")
+    }
+
+    func memorize(_ halves: [HalfPage], notes: String?) async throws {
+        guard let plan else { throw DataStoreError.planNotFound }
+        let ids = try await dataStore.memorize(halves, planId: plan.id, notes: notes)
+        lastCompleted = .lesson(ids: ids, description: halves.portionDescription)
+        await loadData()
+    }
+
+    func logRecentReview(_ block: HifzToday.RecentBlock, rating: PerformanceRating, notes: String?) async throws {
+        guard let plan else { throw DataStoreError.planNotFound }
+        let id = try await dataStore.logRecentReview(planId: plan.id, block: block, performanceRating: rating, notes: notes)
+        lastCompleted = .recentReview(id: id, description: block.halves.pageRangeDescription)
+        await loadData()
+    }
+
+    func setPlanActive(_ isActive: Bool) async {
+        guard var plan else { return }
+        plan.isActive = isActive
+        do {
+            try await dataStore.updatePlan(plan)
+            await loadData()
+        } catch {
+            self.error = "Failed to update your plan: \(error.localizedDescription)"
+        }
+    }
+
+    /// Ends the current plan, moving everything memorized into revision.
+    func endPlan() async {
+        guard let plan else { return }
+        do {
+            movedToRevision = try await dataStore.endPlan(id: plan.id)
+            await loadData()
+        } catch {
+            self.error = "Failed to end your plan: \(error.localizedDescription)"
         }
     }
     
     private func updateBadgeCount() {
-        let count = todaySchedules.filter { $0.isDueToday }.count
+        let count = todaySchedules.filter { $0.isDueToday }.count + (hifzToday?.pendingCount ?? 0)
         notificationManager.updateBadgeCount(count)
     }
 }

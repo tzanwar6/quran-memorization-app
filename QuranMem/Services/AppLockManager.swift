@@ -7,6 +7,7 @@ import Foundation
 enum LockError: LocalizedError {
     case permanent
     case changeWindowClosed
+    case planHeld
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,8 @@ enum LockError: LocalizedError {
             return "The lock is permanent. It can only be turned off during your weekly change window."
         case .changeWindowClosed:
             return "The change window can only be moved while it’s open."
+        case .planHeld:
+            return "Today’s lesson or recent review is due. While the Revision Lock is permanent, your plan can’t be paused or ended, or today taken off its lesson days. Log today’s work first, or wait for your weekly change window."
         }
     }
 }
@@ -30,6 +33,8 @@ final class AppLockManager: ObservableObject {
     @Published private(set) var commitment: LockCommitment?
     /// True while a permanent lock's settings are fixed, which is all week except its change window.
     @Published private(set) var isFrozen: Bool
+    /// Whether today's new lesson and recent review keep the apps locked too.
+    @Published private(set) var includesMemorization: Bool
 
     var isEnabled: Bool { status != .disabled }
     var isPermanent: Bool { commitment != nil }
@@ -39,6 +44,9 @@ final class AppLockManager: ObservableObject {
 
     private let store: LockStore
     private let scheduleProvider: @MainActor () async throws -> [ScheduleWithSurah]
+    private let hifzProvider: @MainActor () async throws -> HifzToday?
+    private let defaults: UserDefaults
+    private static let includesMemorizationKey = "revisionLock.includeMemorization"
     private var wakeTask: Task<Void, Never>?
     private var hasCheckedMonitoring = false
 
@@ -46,10 +54,17 @@ final class AppLockManager: ObservableObject {
         store: LockStore = LockStore(),
         scheduleProvider: @escaping @MainActor () async throws -> [ScheduleWithSurah] = {
             try await DataStore().getAllSchedules()
-        }
+        },
+        hifzProvider: @escaping @MainActor () async throws -> HifzToday? = {
+            try await DataStore().getHifzToday()
+        },
+        defaults: UserDefaults = .standard
     ) {
         self.store = store
         self.scheduleProvider = scheduleProvider
+        self.hifzProvider = hifzProvider
+        self.defaults = defaults
+        includesMemorization = defaults.object(forKey: Self.includesMemorizationKey) as? Bool ?? true
         status = LockPolicy.status(state: store.state)
         selection = store.selection
         commitment = store.isEnabled ? store.commitment : nil
@@ -81,7 +96,12 @@ final class AppLockManager: ObservableObject {
         }
 
         do {
-            store.dueDates = try await scheduleProvider().filter(\.isActive).map(\.nextDueDate)
+            let revision = try await scheduleProvider().filter(\.isActive).map(\.nextDueDate)
+            // Today's work, or the next day's, so the midnight check knows about it without the app.
+            let memorization = includesMemorization
+                ? (try await hifzProvider()).map { HifzForecast(today: $0).lockDueDates() } ?? []
+                : []
+            store.dueDates = revision + memorization
         } catch {
             // Keep the last known due dates: unlocking because of a failed read would defeat the lock.
             print("Error reading schedules for the revision lock: \(error)")
@@ -182,6 +202,20 @@ final class AppLockManager: ObservableObject {
     /// Whether the permanent lock stops this passage being paused, deleted or rescheduled.
     func holds(_ schedule: ScheduleWithSurah) -> Bool {
         LockPolicy.holdsPassage(dueDate: schedule.nextDueDate, isActive: schedule.isActive, state: store.state)
+    }
+
+    /// Whether the permanent lock stops the plan being paused or ended, or today taken off its
+    /// lesson days: the same rule as for a passage that's due.
+    func holdsPlan(_ today: HifzToday) -> Bool {
+        includesMemorization && today.pendingCount > 0 && LockPolicy.isFrozen(state: store.state)
+    }
+
+    /// Leaving memorization out loosens the lock, so a permanent lock only allows it in the change window.
+    func setIncludesMemorization(_ include: Bool) async throws {
+        if !include, LockPolicy.isFrozen(state: store.state) { throw LockError.permanent }
+        defaults.set(include, forKey: Self.includesMemorizationKey)
+        includesMemorization = include
+        await refresh()
     }
 }
 

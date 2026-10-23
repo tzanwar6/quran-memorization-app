@@ -29,7 +29,54 @@ extension ScheduleEntity {
             endPage: endPage == 0 ? nil : endPage,
             nextDueDate: nextDueDate ?? Date(),
             isActive: isActive,
-            hasBeenReviewed: hasBeenReviewed
+            hasBeenReviewed: hasBeenReviewed,
+            hifzPlanId: hifzPlanId
+        )
+    }
+}
+
+extension HifzPlanEntity {
+    func toStruct() -> HifzPlan {
+        HifzPlan(
+            id: id ?? UUID(),
+            title: title ?? "",
+            startPage: Int(startPage),
+            endPage: Int(endPage),
+            halvesPerDay: Int(halvesPerDay),
+            lessonWeekdays: lessonWeekdays,
+            recentReviewCount: Int(recentReviewCount),
+            revisionFrequency: Frequency(rawValue: revisionFrequency ?? "") ?? .weekly,
+            isActive: isActive,
+            completedAt: completedAt,
+            createdAt: createdAt ?? Date()
+        )
+    }
+}
+
+extension HifzLessonEntity {
+    func toStruct() -> HifzLesson {
+        HifzLesson(
+            id: id ?? UUID(),
+            planId: planId ?? UUID(),
+            halfPage: HalfPage(page: Int(page), half: HalfPage.Half(rawValue: half) ?? .top),
+            memorizedAt: memorizedAt ?? Date(),
+            notes: notes,
+            graduatedAt: graduatedAt
+        )
+    }
+}
+
+extension HifzReviewEntity {
+    func toStruct() -> HifzReview {
+        HifzReview(
+            id: id ?? UUID(),
+            planId: planId ?? UUID(),
+            completedAt: completedAt ?? Date(),
+            performanceRating: PerformanceRating(rawValue: performanceRating ?? "good") ?? .good,
+            notes: notes,
+            firstPage: Int(firstPage),
+            lastPage: Int(lastPage),
+            halfCount: Int(halfCount)
         )
     }
 }

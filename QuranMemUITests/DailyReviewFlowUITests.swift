@@ -8,9 +8,9 @@ final class DailyReviewFlowUITests: XCTestCase {
         app.launchArguments = ["-ui-testing", "-remindersEnabled", "NO"]
         app.launch()
 
-        XCTAssertTrue(app.buttons["Choose Your First Surah"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Add a Surah You Know"].waitForExistence(timeout: 10))
         capture(app, "01-first-use")
-        app.buttons["Choose Your First Surah"].tap()
+        app.buttons["Add a Surah You Know"].tap()
         createSchedule(app, named: "Al-Fatiha")
         XCTAssertTrue(app.staticTexts["0 of 1 reviews complete"].waitForExistence(timeout: 5))
 
@@ -59,8 +59,8 @@ final class DailyReviewFlowUITests: XCTestCase {
         app.launchArguments = ["-ui-testing", "-remindersEnabled", "NO", "-colorScheme", "dark",
                                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
-        XCTAssertTrue(app.buttons["Choose Your First Surah"].waitForExistence(timeout: 10))
-        app.buttons["Choose Your First Surah"].tap()
+        XCTAssertTrue(app.buttons["Add a Surah You Know"].waitForExistence(timeout: 10))
+        app.buttons["Add a Surah You Know"].tap()
         createSchedule(app, named: "Al-Fatiha")
         XCTAssertTrue(app.buttons["startReview"].waitForExistence(timeout: 5))
         capture(app, "07-large-text-dark-home")

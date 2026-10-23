@@ -54,11 +54,34 @@ struct HomeView: View {
                 )) { id, frequency, fullSurah, start, end, startsOn in
                     try await viewModel.createSchedule(surahId: id, frequency: frequency, isFullSurah: fullSurah, startPage: start, endPage: end, startsOn: startsOn)
                 }
+            case .lesson(let plan, let halves, let memorizedCount):
+                HifzLessonView(
+                    plan: plan,
+                    halves: halves,
+                    memorizedCount: memorizedCount,
+                    surahNames: viewModel.surahNames(onPages: halves.map(\.page))
+                ) { notes in
+                    try await viewModel.memorize(halves, notes: notes)
+                }
+            case .recentReview(let today, let block):
+                RecentReviewView(
+                    plan: today.plan,
+                    block: block,
+                    surahNames: viewModel.surahNames(onPages: block.halves.map(\.page)),
+                    previousNote: viewModel.previousRecentReviewNote,
+                    nextToMove: today.nextToMove
+                ) { rating, notes in
+                    try await viewModel.logRecentReview(block, rating: rating, notes: notes)
+                }
+            case .planSetup:
+                HifzPlanSetupView(mode: .create, surahs: viewModel.surahs, replacingPlanTitle: viewModel.plan?.title) { draft in
+                    try await viewModel.createPlan(draft, replacingCurrent: true)
+                }
             }
         }
         .overlay(alignment: .bottom) {
             if presentation == nil, let completed = viewModel.lastCompleted {
-                UndoBanner(completed: completed) {
+                UndoBanner(action: completed) {
                     Task {
                         await viewModel.undoLastSession()
                     }
@@ -66,7 +89,7 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.gutter)
                 .padding(.bottom, Metrics.card)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                .task(id: completed.sessionId) {
+                .task(id: completed.id) {
                     do { try await Task.sleep(nanoseconds: 8_000_000_000) }
                     catch { return }
                     withAnimation(.smooth(duration: 0.35)) {
@@ -106,27 +129,80 @@ struct HomeView: View {
                 } else {
                     ProgressView().frame(maxWidth: .infinity).padding(.vertical, 32)
                 }
-            } else if viewModel.dailySummary.state == .reviewsDue {
+            } else {
                 if case .locked = lockManager.status {
                     RevisionLockBanner()
                 }
-                dailySummaryCard
-                Text("Ready to Review")
-                    .font(.headline)
-                    .padding(.top, Metrics.card)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Tap a passage to log a review you’ve already completed.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                ForEach(viewModel.todaySchedules) { schedule in
-                    ScheduleTaskCard(schedule: schedule) {
-                        presentation = .quickLog(schedule)
+                if let moved = viewModel.movedToRevision {
+                    MovedToRevisionBanner(moved: moved) {
+                        withAnimation(.snappy(duration: 0.3)) { viewModel.movedToRevision = nil }
                     }
                 }
-            } else {
-                emptyState
+                if let today = viewModel.hifzToday {
+                    HifzTodayCard(
+                        today: today,
+                        surahNames: viewModel.surahNames(onPages:),
+                        onMemorize: { presentation = .lesson(today.plan, $0, today.memorizedCount) },
+                        onRecite: { presentation = .recentReview(today, $0) },
+                        onResume: { Task { await viewModel.setPlanActive(true) } },
+                        onStartNext: { presentation = .planSetup }
+                    )
+                }
+                revisionContent
             }
         }
+    }
+
+    @ViewBuilder private var revisionContent: some View {
+        if viewModel.dailySummary.state == .reviewsDue {
+            dailySummaryCard
+            Text("Ready to Review")
+                .font(.headline)
+                .padding(.top, Metrics.card)
+                .accessibilityAddTraits(.isHeader)
+            Text("Tap a passage to log a review you’ve already completed.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            ForEach(viewModel.todaySchedules) { schedule in
+                ScheduleTaskCard(schedule: schedule) {
+                    presentation = .quickLog(schedule)
+                }
+            }
+        } else if viewModel.plan != nil {
+            revisionStatusRow
+        } else {
+            emptyState
+        }
+    }
+
+    /// With a plan on Home, a day without revision gets one quiet line instead of a full empty state.
+    private var revisionStatusRow: some View {
+        let summary = viewModel.dailySummary
+        let message: String
+        switch summary.state {
+        case .finished: message = "Today’s revision is complete. \(nextReviewMessage)"
+        case .gettingStarted: message = "Portions move here once they’ve settled in recent review."
+        case .paused: message = "Your revision schedules are paused."
+        case .quietDay, .reviewsDue: message = "No revision due today. \(nextReviewMessage)"
+        }
+        let trimmedMessage = message.trimmingCharacters(in: .whitespaces)
+        return HStack(spacing: Metrics.card) {
+            Image(systemName: summary.state == .finished ? "checkmark.circle.fill" : "calendar")
+                .font(.title3)
+                .foregroundStyle(Color.islamicGreen)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Revision")
+                    .font(.subheadline.weight(.semibold))
+                Text(trimmedMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(Metrics.gutter)
+        .cardSurface()
+        .accessibilityElement(children: .combine)
     }
 
     private var dailySummaryCard: some View {
@@ -160,9 +236,15 @@ struct HomeView: View {
         let summary = viewModel.dailySummary
         switch summary.state {
         case .gettingStarted:
-            HomeEmptyState(title: "Begin Your Review Rhythm", symbol: "book.closed", message: "Choose a surah you’re memorizing. We’ll help you keep it fresh, one review at a time.", actionTitle: "Choose Your First Surah") {
-                presentation = .create
-            }
+            HomeEmptyState(
+                title: "Memorize and Keep It Fresh",
+                symbol: "book.closed",
+                message: "Start a plan to learn new pages half a page at a time, or add a surah you already know to keep it in revision.",
+                actionTitle: "Start Memorizing",
+                action: { presentation = .planSetup },
+                secondaryTitle: "Add a Surah You Know",
+                secondaryAction: { presentation = .create }
+            )
         case .finished:
             HomeEmptyState(title: "Today’s Reviews Are Complete", symbol: "checkmark.circle.fill", message: "\(summary.completedCount) \(summary.completedCount == 1 ? "passage" : "passages") reviewed today. \(nextReviewMessage)", actionTitle: "Manage Schedules", action: onManageSchedules)
         case .quietDay:
@@ -178,7 +260,7 @@ struct HomeView: View {
         if let next = viewModel.dailySummary.nextReviewDate {
             return "Your next review is \(next.formatted(date: .abbreviated, time: .omitted))."
         }
-        return "You can manage your review rhythm in Schedules."
+        return viewModel.plan == nil ? "You can manage your review rhythm in Schedules." : ""
     }
 
     private var calendarSection: some View {
@@ -551,8 +633,25 @@ struct ScheduleTaskCard: View {
 }
 
 struct UndoBanner: View {
-    let completed: CompletedSession
+    let action: UndoableAction
     let onUndo: () -> Void
+
+    private var title: String {
+        switch action {
+        case .revision(let completed): return "\(completed.surahEnglishName) completed"
+        case .lesson(_, let description): return "\(description) memorized"
+        case .recentReview: return "Recent review saved"
+        }
+    }
+
+    private var subtitle: String {
+        switch action {
+        case .revision(let completed):
+            return "Next review \(completed.nextDueDate.formatted(.dateTime.weekday(.wide).month().day()))"
+        case .lesson: return "It joins recent review tomorrow."
+        case .recentReview(_, let description): return description
+        }
+    }
 
     var body: some View {
         HStack(spacing: Metrics.card) {
@@ -561,10 +660,10 @@ struct UndoBanner: View {
                 .font(.title3)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(completed.surahEnglishName) completed")
+                Text(title)
                     .font(.subheadline.weight(.medium))
 
-                Text("Next review \(completed.nextDueDate.formatted(.dateTime.weekday(.wide).month().day()))")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -598,7 +697,7 @@ private struct RevisionLockBanner: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Apps are locked")
                     .font(.subheadline.weight(.medium))
-                Text("They unlock when today’s reviews are logged.")
+                Text("They unlock when everything due today is logged.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -614,12 +713,18 @@ private enum HomePresentation: Identifiable {
     case create
     case quickLog(ScheduleWithSurah)
     case queue([ScheduleWithSurah])
+    case lesson(HifzPlan, [HalfPage], Int)
+    case recentReview(HifzToday, HifzToday.RecentBlock)
+    case planSetup
 
     var id: String {
         switch self {
         case .create: return "create"
         case .quickLog(let schedule): return "log-\(schedule.id)"
         case .queue: return "queue"
+        case .lesson: return "lesson"
+        case .recentReview: return "recent-review"
+        case .planSetup: return "plan-setup"
         }
     }
 }
@@ -630,6 +735,9 @@ private struct HomeEmptyState: View {
     let message: String
     let actionTitle: String
     let action: () -> Void
+    /// With a second choice, the first becomes the prominent one.
+    var secondaryTitle: String? = nil
+    var secondaryAction: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: Metrics.card) {
@@ -643,10 +751,26 @@ private struct HomeEmptyState: View {
             Text(message)
                 .font(.body)
                 .foregroundStyle(.secondary)
-            Button(actionTitle, action: action)
-                .buttonStyle(.bordered)
-                .frame(minHeight: Metrics.minTarget)
+            if let secondaryTitle, let secondaryAction {
+                Button(action: action) {
+                    Text(actionTitle)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(.systemBackground))
+                        .frame(maxWidth: .infinity, minHeight: Metrics.minTarget)
+                }
+                .buttonStyle(.borderedProminent)
                 .padding(.top, 4)
+                Button(action: secondaryAction) {
+                    Text(secondaryTitle)
+                        .frame(maxWidth: .infinity, minHeight: Metrics.minTarget)
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.bordered)
+                    .frame(minHeight: Metrics.minTarget)
+                    .padding(.top, 4)
+            }
         }
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)

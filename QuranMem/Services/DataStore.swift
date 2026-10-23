@@ -4,11 +4,15 @@ import Foundation
 enum DataStoreError: LocalizedError {
     case scheduleNotFound
     case sessionNotFound
+    case planNotFound
+    case planAlreadyActive
 
     var errorDescription: String? {
         switch self {
         case .scheduleNotFound: return "The schedule no longer exists."
         case .sessionNotFound: return "The session no longer exists."
+        case .planNotFound: return "The memorization plan no longer exists."
+        case .planAlreadyActive: return "You already have a memorization plan. End it before starting another."
         }
     }
 }
@@ -345,6 +349,308 @@ class DataStore: ObservableObject {
         return try viewContext.fetch(request).first?.completedAt
     }
 
+    // MARK: - Memorization Plan Operations
+
+    /// The plan that hasn't finished or been ended, paused or not. There's at most one.
+    func getCurrentPlan() async throws -> HifzPlan? {
+        try fetchCurrentPlan()?.toStruct()
+    }
+
+    /// What the current plan asks for today, or nil without a plan.
+    func getHifzToday(now: Date = Date()) async throws -> HifzToday? {
+        guard let plan = try fetchCurrentPlan()?.toStruct() else { return nil }
+        return HifzToday(plan: plan, lessons: try await getAllLessons(), reviews: try await getAllRecentReviews(), now: now)
+    }
+
+    /// Every memorized half, from every plan.
+    func getAllLessons() async throws -> [HifzLesson] {
+        try viewContext.fetch(HifzLessonEntity.fetchRequest()).map { $0.toStruct() }
+    }
+
+    /// Every recent review, from every plan, newest first.
+    func getAllRecentReviews() async throws -> [HifzReview] {
+        try fetchAllRecentReviews().map { $0.toStruct() }
+    }
+
+    @discardableResult
+    func createPlan(
+        title: String,
+        startPage: Int,
+        endPage: Int,
+        halvesPerDay: Int,
+        lessonWeekdays: Int16,
+        recentReviewCount: Int,
+        revisionFrequency: Frequency,
+        now: Date = Date()
+    ) async throws -> HifzPlan {
+        guard try fetchCurrentPlan() == nil else { throw DataStoreError.planAlreadyActive }
+
+        let plan = HifzPlanEntity(context: viewContext)
+        plan.id = UUID()
+        plan.title = title
+        plan.startPage = Int16(startPage)
+        plan.endPage = Int16(endPage)
+        plan.halvesPerDay = Int16(halvesPerDay)
+        plan.lessonWeekdays = lessonWeekdays
+        plan.recentReviewCount = Int16(recentReviewCount)
+        plan.revisionFrequency = revisionFrequency.rawValue
+        plan.isActive = true
+        plan.createdAt = now
+        plan.updatedAt = now
+
+        try saveOrRollBack()
+        return plan.toStruct()
+    }
+
+    /// Saves the plan's pace and pause state. Its range can't change once lessons exist.
+    func updatePlan(_ plan: HifzPlan, now: Date = Date()) async throws {
+        guard let entity = try fetchPlan(id: plan.id) else { throw DataStoreError.planNotFound }
+
+        entity.title = plan.title
+        entity.halvesPerDay = Int16(plan.halvesPerDay)
+        entity.lessonWeekdays = plan.lessonWeekdays
+        entity.recentReviewCount = Int16(plan.recentReviewCount)
+        entity.revisionFrequency = plan.revisionFrequency.rawValue
+        entity.isActive = plan.isActive
+        entity.updatedAt = now
+
+        try saveOrRollBack()
+    }
+
+    /// Closes the plan. Everything memorized moves to revision now, including pages only half
+    /// learned, so nothing memorized is left without review.
+    @discardableResult
+    func endPlan(id: UUID, now: Date = Date()) async throws -> MovedToRevision? {
+        guard let entity = try fetchPlan(id: id) else { throw DataStoreError.planNotFound }
+        let plan = entity.toStruct()
+
+        let unsettled = try fetchLessons(planId: id).filter { $0.graduatedAt == nil }
+        unsettled.forEach { $0.graduatedAt = now }
+        let pages = plan.pagesInOrder(unsettled.map { Int($0.page) })
+
+        do {
+            let moved = try await applyRevisionChanges(pages: pages, plan: plan, now: now)
+            entity.isActive = false
+            entity.completedAt = now
+            entity.updatedAt = now
+            try viewContext.save()
+            return moved
+        } catch {
+            viewContext.rollback()
+            throw error
+        }
+    }
+
+    /// Records today's lesson as memorized. Returns the new lessons' ids, for undo.
+    @discardableResult
+    func memorize(_ halves: [HalfPage], planId: UUID, notes: String?, now: Date = Date()) async throws -> [UUID] {
+        guard try fetchPlan(id: planId) != nil else { throw DataStoreError.planNotFound }
+        let existing = Set(try fetchLessons(planId: planId).map { HalfPage(page: Int($0.page), half: HalfPage.Half(rawValue: $0.half) ?? .top) })
+
+        var ids: [UUID] = []
+        for half in halves where !existing.contains(half) {
+            let lesson = HifzLessonEntity(context: viewContext)
+            let id = UUID()
+            lesson.id = id
+            lesson.planId = planId
+            lesson.page = Int16(half.page)
+            lesson.half = half.half.rawValue
+            lesson.memorizedAt = now
+            lesson.notes = notes
+            ids.append(id)
+        }
+
+        do {
+            try recalculateStats(now: now)
+            try viewContext.save()
+        } catch {
+            viewContext.rollback()
+            throw error
+        }
+        return ids
+    }
+
+    func undoMemorize(lessonIds: [UUID]) async throws {
+        let request: NSFetchRequest<HifzLessonEntity> = HifzLessonEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "id IN %@", lessonIds)
+        try viewContext.fetch(request).forEach(viewContext.delete)
+
+        try recalculateStats()
+        try saveOrRollBack()
+    }
+
+    /// Logs a recitation of the recent-review block. Returns its id, for undo.
+    @discardableResult
+    func logRecentReview(
+        planId: UUID,
+        block: HifzToday.RecentBlock,
+        performanceRating: PerformanceRating,
+        notes: String?,
+        now: Date = Date()
+    ) async throws -> UUID {
+        guard try fetchPlan(id: planId) != nil else { throw DataStoreError.planNotFound }
+
+        let review = HifzReviewEntity(context: viewContext)
+        let id = UUID()
+        review.id = id
+        review.planId = planId
+        review.completedAt = now
+        review.performanceRating = performanceRating.rawValue
+        review.notes = notes
+        review.firstPage = Int16(block.firstPage)
+        review.lastPage = Int16(block.lastPage)
+        review.halfCount = Int16(block.halfCount)
+
+        do {
+            try recalculateStats(now: now)
+            try viewContext.save()
+        } catch {
+            viewContext.rollback()
+            throw error
+        }
+        return id
+    }
+
+    /// Edits a past recent review. Anything already moved to revision stays there.
+    func updateRecentReview(id: UUID, performanceRating: PerformanceRating, notes: String?) async throws {
+        guard let review = try fetchRecentReview(id: id) else { throw DataStoreError.sessionNotFound }
+
+        review.performanceRating = performanceRating.rawValue
+        review.notes = notes
+
+        try recalculateStats()
+        try saveOrRollBack()
+    }
+
+    /// Deletes a recent review, including one just logged. Anything already moved to revision stays there.
+    func deleteRecentReview(id: UUID) async throws {
+        guard let review = try fetchRecentReview(id: id) else { return }
+
+        viewContext.delete(review)
+
+        try recalculateStats()
+        try saveOrRollBack()
+    }
+
+    /// Moves halves that have had enough good recent reviews into revision, and finishes the plan
+    /// once every half has moved. Reviews logged today only count from tomorrow, so this can run
+    /// on every load without an undo ever having to take something back out of revision.
+    @discardableResult
+    func graduateReadyLessons(now: Date = Date()) async throws -> MovedToRevision? {
+        guard let entity = try fetchCurrentPlan(), entity.isActive else { return nil }
+        let plan = entity.toStruct()
+
+        let lessonEntities = try fetchLessons(planId: plan.id)
+        let lessons = lessonEntities.map { $0.toStruct() }
+        let reviews = try fetchAllRecentReviews().map { $0.toStruct() }
+        let ready = Set(HifzGraduation.halvesReady(
+            lessons: lessons, reviews: reviews, requiredCount: plan.recentReviewCount, now: now
+        ).map(\.id))
+        guard !ready.isEmpty else { return nil }
+
+        for lesson in lessonEntities where lesson.id.map(ready.contains) == true {
+            lesson.graduatedAt = now
+        }
+
+        // A page moves once both its halves have.
+        let graduated = Set(lessons.filter { $0.graduatedAt != nil || ready.contains($0.id) }.map(\.halfPage))
+        let pages = plan.pagesInOrder(lessons.filter { ready.contains($0.id) }.map(\.halfPage.page)).filter {
+            graduated.contains(HalfPage(page: $0, half: .top)) && graduated.contains(HalfPage(page: $0, half: .bottom))
+        }
+
+        do {
+            let moved = try await applyRevisionChanges(pages: pages, plan: plan, now: now)
+            if graduated.count >= plan.totalHalves {
+                entity.completedAt = now
+                entity.updatedAt = now
+            }
+            try viewContext.save()
+            return moved
+        } catch {
+            viewContext.rollback()
+            throw error
+        }
+    }
+
+    /// Creates or widens the plan's revision schedules for `pages`. Does not save.
+    private func applyRevisionChanges(pages: [Int], plan: HifzPlan, now: Date) async throws -> MovedToRevision? {
+        guard !pages.isEmpty else { return nil }
+        let schedules = try await getAllSchedules()
+        let surahs = try await getAllSurahs()
+        let changes = HifzGraduation.revisionChanges(pages: pages, planId: plan.id, schedules: schedules, surahs: surahs)
+
+        for change in changes {
+            let schedule: ScheduleEntity
+            switch change.kind {
+            case .create:
+                schedule = ScheduleEntity(context: viewContext)
+                schedule.id = UUID()
+                schedule.surahId = Int16(change.surahId)
+                schedule.frequency = plan.revisionFrequency.rawValue
+                schedule.hifzPlanId = plan.id
+                schedule.isActive = true
+                schedule.createdAt = now
+                // It was just recited daily in recent review, so the first revision is one interval away.
+                schedule.nextDueDate = ReviewEngine.calculateNextDueDate(
+                    frequency: plan.revisionFrequency, from: Calendar.current.startOfDay(for: now)
+                )
+            case .extend(let id):
+                guard let existing = try fetchSchedule(id: id) else { continue }
+                schedule = existing
+            }
+            schedule.isFullSurah = change.isFullSurah
+            schedule.startPage = Int16(change.pages?.lowerBound ?? 0)
+            schedule.endPage = Int16(change.pages?.upperBound ?? 0)
+            schedule.updatedAt = now
+        }
+
+        let names = changes.compactMap { change in surahs.first { $0.id == change.surahId }?.englishName }
+        return names.isEmpty ? nil : MovedToRevision(surahNames: names, frequency: plan.revisionFrequency)
+    }
+
+    private func fetchCurrentPlan() throws -> HifzPlanEntity? {
+        let request: NSFetchRequest<HifzPlanEntity> = HifzPlanEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "completedAt == nil")
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \HifzPlanEntity.createdAt, ascending: false)]
+        request.fetchLimit = 1
+        return try viewContext.fetch(request).first
+    }
+
+    private func fetchPlan(id: UUID) throws -> HifzPlanEntity? {
+        let request: NSFetchRequest<HifzPlanEntity> = HifzPlanEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        request.fetchLimit = 1
+        return try viewContext.fetch(request).first
+    }
+
+    private func fetchLessons(planId: UUID) throws -> [HifzLessonEntity] {
+        let request: NSFetchRequest<HifzLessonEntity> = HifzLessonEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "planId == %@", planId as CVarArg)
+        return try viewContext.fetch(request)
+    }
+
+    private func fetchRecentReview(id: UUID) throws -> HifzReviewEntity? {
+        let request: NSFetchRequest<HifzReviewEntity> = HifzReviewEntity.fetchRequest()
+        request.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        request.fetchLimit = 1
+        return try viewContext.fetch(request).first
+    }
+
+    private func fetchAllRecentReviews() throws -> [HifzReviewEntity] {
+        let request: NSFetchRequest<HifzReviewEntity> = HifzReviewEntity.fetchRequest()
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \HifzReviewEntity.completedAt, ascending: false)]
+        return try viewContext.fetch(request)
+    }
+
+    private func saveOrRollBack() throws {
+        do {
+            try viewContext.save()
+        } catch {
+            viewContext.rollback()
+            throw error
+        }
+    }
+
     // MARK: - Stats Operations
 
     func getStats() async throws -> UserStatistics {
@@ -372,15 +678,21 @@ class DataStore: ObservableObject {
             stats.id = UUID()
         }
 
+        // Revision sessions and recent reviews are rated sessions. A memorized lesson has no rating,
+        // but it still keeps the streak going.
         let sessions = try fetchAllSessions().filter { !$0.isDeleted }
+        let recentReviews = try fetchAllRecentReviews().filter { !$0.isDeleted }
+        let lessons = try viewContext.fetch(HifzLessonEntity.fetchRequest()).filter { !$0.isDeleted }
+        let ratings = sessions.map(\.performanceRating) + recentReviews.map(\.performanceRating)
         let sessionDates = sessions.compactMap(\.completedAt)
+            + recentReviews.compactMap(\.completedAt)
+            + lessons.compactMap(\.memorizedAt)
 
-        let totalRating = sessions.reduce(0.0) { sum, session in
-            let rating = PerformanceRating(rawValue: session.performanceRating ?? "good") ?? .good
-            return sum + rating.numericValue
+        let totalRating = ratings.reduce(0.0) { sum, rating in
+            sum + (PerformanceRating(rawValue: rating ?? "good") ?? .good).numericValue
         }
-        let totalSessions = Int16(clamping: sessions.count)
-        let averageRating = sessions.isEmpty ? 0.0 : totalRating / Double(sessions.count)
+        let totalSessions = Int16(clamping: ratings.count)
+        let averageRating = ratings.isEmpty ? 0.0 : totalRating / Double(ratings.count)
         let lastSessionDate = sessionDates.max()
         let currentStreak = Int16(clamping: ReviewEngine.calculateCurrentStreak(sessionDates: sessionDates, now: now))
         let longestStreak = Int16(clamping: ReviewEngine.calculateLongestStreak(sessionDates: sessionDates))
@@ -399,13 +711,18 @@ class DataStore: ObservableObject {
     // MARK: - Data Management
 
     func clearAllData() async throws {
-        let scheduleRequest: NSFetchRequest<NSFetchRequestResult> = ScheduleEntity.fetchRequest()
-        let sessionRequest: NSFetchRequest<NSFetchRequestResult> = SessionEntity.fetchRequest()
+        let requests: [NSFetchRequest<NSFetchRequestResult>] = [
+            ScheduleEntity.fetchRequest(),
+            SessionEntity.fetchRequest(),
+            HifzPlanEntity.fetchRequest(),
+            HifzLessonEntity.fetchRequest(),
+            HifzReviewEntity.fetchRequest(),
+        ]
 
         // Batch deletes bypass the context, so collect the deleted IDs and merge them in;
         // otherwise the context keeps serving the deleted objects.
         var deletedObjectIDs: [NSManagedObjectID] = []
-        for request in [scheduleRequest, sessionRequest] {
+        for request in requests {
             let deleteRequest = NSBatchDeleteRequest(fetchRequest: request)
             deleteRequest.resultType = .resultTypeObjectIDs
             let result = try viewContext.execute(deleteRequest) as? NSBatchDeleteResult

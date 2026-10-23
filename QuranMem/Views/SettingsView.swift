@@ -93,6 +93,15 @@ struct SettingsView: View {
             
             if lockManager.isEnabled {
                 appsToLockRow
+
+                Toggle("Include Memorization", isOn: Binding(
+                    get: { lockManager.includesMemorization },
+                    set: { newValue in
+                        Task { await viewModel.setLockIncludesMemorization(newValue) }
+                    }
+                ))
+                .tint(.islamicGreen)
+                .disabled(lockManager.isFrozen && lockManager.includesMemorization)
                 
                 if viewModel.untickedAppsWereKept {
                     Text("The apps you unticked were kept. Apps can only be removed during your weekly change window.")
@@ -128,6 +137,9 @@ struct SettingsView: View {
         }
         if lockManager.isPermanent {
             return "Your change window is open. Anything here can be changed, and the lock can be turned off, until it closes."
+        }
+        if lockManager.isEnabled && lockManager.includesMemorization {
+            return "Locks the apps you choose until today’s reviews, new lesson and recent review are logged. Days with nothing due stay unlocked."
         }
         return "Locks the apps you choose until today’s reviews are logged. Days with nothing due stay unlocked."
     }
@@ -235,7 +247,7 @@ struct SettingsView: View {
         } header: {
             Text("Data Management")
         } footer: {
-            Text("This will delete all schedules, sessions, and statistics. This action cannot be undone.")
+            Text("This will delete all schedules, memorization plans, sessions, and statistics. This action cannot be undone.")
         }
         .alert("Reset All Data", isPresented: $viewModel.showResetConfirmation) {
             Button("Cancel", role: .cancel) { }
@@ -309,14 +321,10 @@ struct RevisionLockStatusRow: View {
         case .disabled:
             return "Apps are never locked."
         case .unlockedForToday:
-            return "Nothing is left to review today, so apps stay open."
+            return "Nothing is left to log today, so apps stay open."
         case .locked(let remaining):
-            return "\(Self.reviews(remaining)) left today. Apps unlock when \(remaining == 1 ? "it’s" : "they’re") logged."
+            return "\(remaining) left to log today. Apps unlock when \(remaining == 1 ? "it’s" : "they’re") logged."
         }
-    }
-
-    private static func reviews(_ count: Int) -> String {
-        "\(count) \(count == 1 ? "review" : "reviews")"
     }
 }
 

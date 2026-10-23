@@ -20,11 +20,14 @@ struct PersistenceController {
 
     let container: NSPersistentContainer
 
-    init(inMemory: Bool = false) {
+    /// `storeURL` opens a store at another location, so tests can check migrating an older store.
+    init(inMemory: Bool = false, storeURL: URL? = nil) {
         container = NSPersistentContainer(name: "QuranMem", managedObjectModel: Self.model)
 
         if inMemory {
             container.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
+        } else if let storeURL {
+            container.persistentStoreDescriptions.first!.url = storeURL
         }
 
         container.loadPersistentStores { storeDescription, error in

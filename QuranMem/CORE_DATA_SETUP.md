@@ -114,10 +114,60 @@ For each entity, set the Codegen setting:
 
 This allows Xcode to auto-generate the entity classes.
 
+## Model Version 2: Memorization Plans
+
+The model is versioned. `QuranMem.xcdatamodel` is version 1, kept so existing stores can migrate; `QuranMem 2.xcdatamodel` is current. Every change in version 2 is additive, so Core Data migrates existing stores automatically (lightweight migration). Never edit a version that has shipped; add a new version instead.
+
+Version 2 adds an optional `hifzPlanId` (UUID) to **ScheduleEntity**, set on schedules a memorization plan created, and three entities:
+
+**HifzPlanEntity**
+
+| Attribute | Type | Optional | Default |
+|-----------|------|----------|---------|
+| id | UUID | No | - |
+| title | String | No | "" |
+| startPage | Integer 16 | No | 0 |
+| endPage | Integer 16 | No | 0 |
+| halvesPerDay | Integer 16 | No | 1 |
+| lessonWeekdays | Integer 16 | No | 127 |
+| recentReviewCount | Integer 16 | No | 14 |
+| revisionFrequency | String | No | weekly |
+| isActive | Boolean | No | YES |
+| completedAt | Date | Yes | - |
+| createdAt | Date | No | - |
+| updatedAt | Date | No | - |
+
+A start page after the end page means the plan runs backward. `lessonWeekdays` has one bit per weekday, bit 0 for Sunday.
+
+**HifzLessonEntity**: one row per memorized half page
+
+| Attribute | Type | Optional | Default |
+|-----------|------|----------|---------|
+| id | UUID | No | - |
+| planId | UUID | No | - |
+| page | Integer 16 | No | 0 |
+| half | Integer 16 | No | 0 (top; 1 is bottom) |
+| memorizedAt | Date | No | - |
+| notes | String | Yes | - |
+| graduatedAt | Date | Yes | - |
+
+**HifzReviewEntity**: one row per recent review
+
+| Attribute | Type | Optional | Default |
+|-----------|------|----------|---------|
+| id | UUID | No | - |
+| planId | UUID | No | - |
+| completedAt | Date | No | - |
+| performanceRating | String | No | - |
+| notes | String | Yes | - |
+| firstPage | Integer 16 | No | 0 |
+| lastPage | Integer 16 | No | 0 |
+| halfCount | Integer 16 | No | 0 |
+
 ## Verification
 
 After setup, your Core Data model should have:
-- ✅ 4 entities (SurahEntity, ScheduleEntity, SessionEntity, StatsEntity)
+- ✅ 7 entities (SurahEntity, ScheduleEntity, SessionEntity, StatsEntity, HifzPlanEntity, HifzLessonEntity, HifzReviewEntity)
 - ✅ All attributes with correct types
 - ✅ Proper optional/required settings
 - ✅ Codegen set to "Class Definition"

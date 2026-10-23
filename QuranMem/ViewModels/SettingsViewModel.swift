@@ -62,6 +62,14 @@ class SettingsViewModel: ObservableObject {
         await notificationManager.setReminderTime(hour: hour, minute: minute)
     }
 
+    func setLockIncludesMemorization(_ include: Bool) async {
+        do {
+            try await lockManager.setIncludesMemorization(include)
+        } catch {
+            lockNotice = error.localizedDescription
+        }
+    }
+
     func setLockEnabled(_ enabled: Bool) async {
         do {
             try await lockManager.setEnabled(enabled)

@@ -21,6 +21,14 @@ QuranMem is a native iOS application designed to help Muslims memorize and retai
 
 ## ✨ Features
 
+### 📖 Memorization Plans
+- Learn new material half a page at a time through a range you choose: a juz, a stretch between two surahs, or the whole Quran, forward or backward
+- Follows the traditional cycle: a **new lesson** (sabaq) each lesson day, a daily **recent review** (sabqi) of everything learned lately, then **revision** (manzil)
+- Choose the pace (½ to 2 pages a lesson), lesson days, how long new material stays in recent review (7, 14 or 30 good reviews), and how often it's revised afterwards
+- Portions move into revision automatically once they've had enough good recent reviews, creating or extending revision schedules for each surah
+- A tap counter for repetitions while you memorize, and a projected finish date
+- Pause, edit or end a plan from Schedules; ending it moves everything memorized into revision
+
 ### 📅 Smart Scheduling
 - Create custom memorization schedules for any Surah
 - Choose from multiple review frequencies (daily, weekly, bi-weekly, monthly, bi-monthly)
@@ -30,6 +38,7 @@ QuranMem is a native iOS application designed to help Muslims memorize and retai
 - Choose how overdue reviews are rescheduled: keep their original rhythm (e.g. the same weekday) or restart the interval from the day you complete them
 
 ### 📊 Progress Tracking
+- A map of all 604 pages, one row per juz, showing what's memorized, still being learned, or partly known
 - Visual analytics with beautiful charts
 - Track your current and longest streak
 - Monitor average performance ratings
@@ -147,6 +156,7 @@ QuranMem/
 - **Schedule**: Memorization schedules with frequency and date tracking
 - **Session**: Completed memorization sessions with ratings and notes
 - **Stats**: Aggregated statistics (streaks, totals, averages)
+- **Hifz Plan, Lesson, Review**: A memorization plan, the half pages memorized through it, and its recent reviews
 
 ## 🎨 Design Philosophy
 
@@ -182,7 +192,6 @@ Please feel free to open an issue or submit a pull request.
 - [ ] iPad optimization with split views
 - [ ] Home screen widgets
 - [ ] Export/import data functionality
-- [ ] Juz-based scheduling
 - [ ] Audio recitation integration
 - [ ] Social features (share progress)
 

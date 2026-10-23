@@ -16,6 +16,7 @@ class NotificationManager: NSObject, ObservableObject {
     private let notificationCenter = UNUserNotificationCenter.current()
     private let defaults: UserDefaults
     private let scheduleProvider: @MainActor () async throws -> [ScheduleWithSurah]
+    private let hifzProvider: @MainActor () async throws -> HifzToday?
     private var refreshTask: Task<Void, Never>?
     private var saveObserver: NSObjectProtocol?
 
@@ -23,10 +24,14 @@ class NotificationManager: NSObject, ObservableObject {
         defaults: UserDefaults = .standard,
         scheduleProvider: @escaping @MainActor () async throws -> [ScheduleWithSurah] = {
             try await DataStore().getAllSchedules()
+        },
+        hifzProvider: @escaping @MainActor () async throws -> HifzToday? = {
+            try await DataStore().getHifzToday()
         }
     ) {
         self.defaults = defaults
         self.scheduleProvider = scheduleProvider
+        self.hifzProvider = hifzProvider
         defaults.register(defaults: [
             Self.remindersEnabledKey: true,
             Self.reminderHourKey: 12,
@@ -102,7 +107,8 @@ class NotificationManager: NSObject, ObservableObject {
 
         do {
             let schedules = try await scheduleProvider()
-            let plan = ReminderPlanner.plan(schedules: schedules, hour: reminderHour, minute: reminderMinute)
+            let hifz = try await hifzProvider().map { HifzForecast(today: $0) }
+            let plan = ReminderPlanner.plan(schedules: schedules, hifz: hifz, hour: reminderHour, minute: reminderMinute)
             await replaceReminders(with: plan)
         } catch {
             print("Error planning reminders: \(error)")

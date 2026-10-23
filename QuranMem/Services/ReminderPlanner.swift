@@ -18,6 +18,7 @@ enum ReminderPlanner {
     /// so each reminder reflects the latest state.
     static func plan(
         schedules: [ScheduleWithSurah],
+        hifz: HifzForecast? = nil,
         hour: Int,
         minute: Int,
         days: Int = defaultDays,
@@ -37,17 +38,36 @@ enum ReminderPlanner {
             }
 
             let due = active.filter { calendar.startOfDay(for: $0.nextDueDate) <= day }
-            guard !due.isEmpty else { return nil }
+            let lesson = hifz?.lessonDue(on: day) ?? false
+            let recent = hifz?.recentReviewDue(on: day) ?? false
+            guard !due.isEmpty || lesson || recent else { return nil }
 
             let overdueCount = due.filter { calendar.startOfDay(for: $0.nextDueDate) < day }.count
+            let revisionBody = due.isEmpty ? nil : body(names: due.map(\.surahEnglishName), overdueCount: overdueCount)
 
             return PlannedReminder(
                 fireDate: fireDate,
-                title: "🕌 Time to review",
-                body: body(names: due.map(\.surahEnglishName), overdueCount: overdueCount),
-                badge: due.count
+                title: due.isEmpty ? "🕌 Time to memorize" : "🕌 Time to review",
+                body: body(lesson: lesson, recentReview: recent, revision: revisionBody),
+                badge: due.count + (lesson ? 1 : 0) + (recent ? 1 : 0)
             )
         }
+    }
+
+    /// Puts the plan's work first: "New lesson and recent review. Al-Mulk is due for review."
+    static func body(lesson: Bool, recentReview: Bool, revision: String?) -> String {
+        let work: String?
+        switch (lesson, recentReview) {
+        case (true, true): work = "new lesson and recent review"
+        case (true, false): work = "new lesson"
+        case (false, true): work = "recent review"
+        case (false, false): work = nil
+        }
+        guard let work else { return revision ?? "" }
+        guard let revision else {
+            return "Your \(work) \(lesson && recentReview ? "are" : "is") waiting."
+        }
+        return "\(work.prefix(1).uppercased() + work.dropFirst()). \(revision)"
     }
 
     static func body(names: [String], overdueCount: Int) -> String {

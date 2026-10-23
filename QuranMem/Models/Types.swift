@@ -170,7 +170,11 @@ struct ScheduleWithSurah: Identifiable, Equatable {
     /// False until the first review is logged. Defaults to true so copies made for display
     /// don't need to know.
     var hasBeenReviewed = true
-    
+    /// The memorization plan that created this schedule, if one did.
+    var hifzPlanId: UUID? = nil
+
+    var isFromPlan: Bool { hifzPlanId != nil }
+
     var scopeDescription: String {
         if isFullSurah { return "Full Surah" }
         guard let startPage, let endPage else { return "Selected Pages" }
@@ -197,7 +201,11 @@ struct ScheduleWithSurah: Identifiable, Equatable {
         lhs.frequency == rhs.frequency &&
         lhs.nextDueDate == rhs.nextDueDate &&
         lhs.isActive == rhs.isActive &&
-        lhs.hasBeenReviewed == rhs.hasBeenReviewed
+        lhs.hasBeenReviewed == rhs.hasBeenReviewed &&
+        lhs.isFullSurah == rhs.isFullSurah &&
+        lhs.startPage == rhs.startPage &&
+        lhs.endPage == rhs.endPage &&
+        lhs.hifzPlanId == rhs.hifzPlanId
     }
 }
 
@@ -219,6 +227,21 @@ struct CompletedSession: Equatable {
     let surahEnglishName: String
     let previousDueDate: Date
     let nextDueDate: Date
+}
+
+/// Something just saved from Home that the undo banner can take back.
+enum UndoableAction: Equatable {
+    case revision(CompletedSession)
+    case lesson(ids: [UUID], description: String)
+    case recentReview(id: UUID, description: String)
+
+    var id: String {
+        switch self {
+        case .revision(let completed): return "revision-\(completed.sessionId)"
+        case .lesson(let ids, _): return "lesson-\(ids.map(\.uuidString).joined())"
+        case .recentReview(let id, _): return "recent-\(id)"
+        }
+    }
 }
 
 struct UserStatistics {

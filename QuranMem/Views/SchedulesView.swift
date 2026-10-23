@@ -6,6 +6,8 @@ struct SchedulesView: View {
     @State private var scheduleToDelete: ScheduleWithSurah?
     @State private var showDeleteConfirmation = false
     @State private var scheduleToEdit: ScheduleWithSurah?
+    @State private var planSheet: PlanSheet?
+    @State private var confirmingEndPlan = false
 
     var body: some View {
         NavigationStack {
@@ -13,30 +15,41 @@ struct SchedulesView: View {
                 if viewModel.schedules.isEmpty && !viewModel.hasLoaded {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if viewModel.schedules.isEmpty {
+                } else if viewModel.schedules.isEmpty && viewModel.plan == nil {
                     ContentUnavailableView {
                         Label("No Schedules Yet", systemImage: "calendar.badge.plus")
                     } description: {
-                        Text("Add a surah to start a review rhythm.")
+                        Text("Add a surah you know to start a review rhythm, or start a plan to memorize something new.")
                     } actions: {
                         Button("Create Schedule") { showingSurahSelection = true }
                             .buttonStyle(.borderedProminent)
+                        Button("Start Memorizing") { planSheet = .create }
+                            .buttonStyle(.bordered)
                     }
                 } else {
                     List {
-                        ForEach(viewModel.schedules) { schedule in
-                            ScheduleListRow(schedule: schedule) {
-                                await viewModel.toggleScheduleActive(
-                                    id: schedule.id,
-                                    currentState: schedule.isActive
-                                )
-                            } onEdit: {
-                                guard !viewModel.blocksChange(to: schedule) else { return }
-                                scheduleToEdit = schedule
-                            } onDelete: {
-                                guard !viewModel.blocksChange(to: schedule) else { return }
-                                scheduleToDelete = schedule
-                                showDeleteConfirmation = true
+                        Section("Memorization Plan") {
+                            if let today = viewModel.hifzToday {
+                                PlanSummaryRow(today: today) {
+                                    planSheet = .edit(today.plan)
+                                } onTogglePause: {
+                                    Task { await viewModel.setPlanActive(!today.plan.isActive) }
+                                } onEnd: {
+                                    confirmingEndPlan = true
+                                }
+                            } else {
+                                Button {
+                                    planSheet = .create
+                                } label: {
+                                    Label("Start a Memorization Plan", systemImage: "book")
+                                }
+                                .tint(.islamicGreen)
+                            }
+                        }
+
+                        if !viewModel.schedules.isEmpty {
+                            Section("Revision") {
+                                scheduleRows
                             }
                         }
                     }
@@ -114,8 +127,52 @@ struct SchedulesView: View {
         } message: { schedule in
             Text(deleteMessage(for: schedule))
         }
+        .sheet(item: $planSheet, onDismiss: {
+            Task { await viewModel.loadData() }
+        }) { sheet in
+            switch sheet {
+            case .create:
+                HifzPlanSetupView(mode: .create, surahs: viewModel.surahs) { draft in
+                    try await viewModel.createPlan(draft)
+                }
+            case .edit(let plan):
+                HifzPlanSetupView(mode: .edit(plan), surahs: viewModel.surahs) { draft in
+                    try await viewModel.savePlan(draft)
+                }
+            }
+        }
+        .confirmationDialog(
+            "End \(viewModel.plan?.title ?? "this plan")?",
+            isPresented: $confirmingEndPlan,
+            titleVisibility: .visible
+        ) {
+            Button("End Plan", role: .destructive) {
+                Task { await viewModel.endPlan() }
+            }
+        } message: {
+            Text("Everything you’ve memorized moves to revision now, including portions still in recent review. You can start a new plan afterwards.")
+        }
         .errorAlert($viewModel.error)
         .errorAlert($viewModel.lockNotice, title: "Log the Review First")
+        .errorAlert($viewModel.planNotice, title: "Plan Ended")
+    }
+
+    private var scheduleRows: some View {
+        ForEach(viewModel.schedules) { schedule in
+            ScheduleListRow(schedule: schedule) {
+                await viewModel.toggleScheduleActive(
+                    id: schedule.id,
+                    currentState: schedule.isActive
+                )
+            } onEdit: {
+                guard !viewModel.blocksChange(to: schedule) else { return }
+                scheduleToEdit = schedule
+            } onDelete: {
+                guard !viewModel.blocksChange(to: schedule) else { return }
+                scheduleToDelete = schedule
+                showDeleteConfirmation = true
+            }
+        }
     }
 
     private func deleteMessage(for schedule: ScheduleWithSurah) -> String {
@@ -128,6 +185,78 @@ struct SchedulesView: View {
         case let count:
             return question + " Its \(count) completed sessions will also be removed from your history and stats."
         }
+    }
+}
+
+private enum PlanSheet: Identifiable {
+    case create
+    case edit(HifzPlan)
+
+    var id: String {
+        switch self {
+        case .create: return "create"
+        case .edit(let plan): return "edit-\(plan.id)"
+        }
+    }
+}
+
+/// The current memorization plan at the top of Schedules: its pace, progress and controls.
+struct PlanSummaryRow: View {
+    let today: HifzToday
+    let onEdit: () -> Void
+    let onTogglePause: () -> Void
+    let onEnd: () -> Void
+
+    private var plan: HifzPlan { today.plan }
+
+    private var progressLine: String {
+        var line = "\(today.memorizedCount) of \(today.totalCount) half pages"
+        if !plan.isActive {
+            line += " · paused"
+        } else if today.lesson != .finished, let finish = today.projectedFinish {
+            line += " · done around \(finish.formatted(.dateTime.month(.abbreviated).day()))"
+        }
+        return line
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(plan.title)
+                    .font(.headline)
+                Text("\(plan.amountDescription) a day · \(plan.lessonDaysDescription) · \(plan.recentReviewCount)-day recent review")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView(value: Double(today.memorizedCount), total: Double(max(1, today.totalCount)))
+                .tint(.islamicGreen)
+                .accessibilityLabel("Plan progress")
+                .accessibilityValue(progressLine)
+
+            Text(progressLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { controls }
+                VStack(alignment: .leading, spacing: 8) { controls }
+            }
+            .padding(.top, 4)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        Button("Edit", action: onEdit)
+            .buttonStyle(.bordered)
+            .tint(.islamicGreen)
+        Button(plan.isActive ? "Pause" : "Resume", action: onTogglePause)
+            .buttonStyle(.bordered)
+            .tint(.islamicGreen)
+        Button("End Plan", role: .destructive, action: onEnd)
+            .buttonStyle(.bordered)
     }
 }
 
@@ -187,11 +316,21 @@ struct ScheduleListRow: View {
             .foregroundStyle(Color.islamicGreen)
 
         if !schedule.isFullSurah, let start = schedule.startPage, let end = schedule.endPage {
-            Label("Pages \(start)–\(end)", systemImage: "book")
+            Label(start == end ? "Page \(start)" : "Pages \(start)–\(end)", systemImage: "book")
                 .foregroundStyle(.secondary)
         } else {
             Label("Full Surah", systemImage: "book.closed")
                 .foregroundStyle(.secondary)
+        }
+
+        if schedule.isFromPlan {
+            Text("Plan")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.islamicGreen)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Color.islamicGreen.opacity(0.12), in: .capsule)
+                .accessibilityLabel("From your memorization plan")
         }
 
         Spacer(minLength: 0)

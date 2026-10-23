@@ -12,16 +12,36 @@ class SchedulesViewModel: ObservableObject {
     /// Set when the permanent lock stops a change. It's a notice, not a failure.
     @Published var lockNotice: String?
     @Published var showSurahSelection = false
+    @Published private(set) var plan: HifzPlan?
+    @Published private(set) var lessons: [HifzLesson] = []
+    @Published private(set) var recentReviews: [HifzReview] = []
+    /// Says what moved to revision when a plan ends.
+    @Published var planNotice: String?
+
+    var hifzToday: HifzToday? {
+        plan.map { HifzToday(plan: $0, lessons: lessons, reviews: recentReviews) }
+    }
     
     private let dataStore: DataStore
     private let isHeldByLock: @MainActor (ScheduleWithSurah) -> Bool
+    private let isPlanHeldByLock: @MainActor (HifzToday) -> Bool
     
     init(
         dataStore: DataStore = DataStore(),
-        isHeldByLock: @escaping @MainActor (ScheduleWithSurah) -> Bool = { AppLockManager.shared.holds($0) }
+        isHeldByLock: @escaping @MainActor (ScheduleWithSurah) -> Bool = { AppLockManager.shared.holds($0) },
+        isPlanHeldByLock: @escaping @MainActor (HifzToday) -> Bool = { AppLockManager.shared.holdsPlan($0) }
     ) {
         self.dataStore = dataStore
         self.isHeldByLock = isHeldByLock
+        self.isPlanHeldByLock = isPlanHeldByLock
+    }
+
+    /// While a permanent lock's settings are fixed and today's lesson or recent review is due, the
+    /// plan can't be paused or ended, or today taken off its lesson days. Says so and returns true.
+    private func blocksPlanChange() -> Bool {
+        guard let today = hifzToday, isPlanHeldByLock(today) else { return false }
+        lockNotice = LockError.planHeld.localizedDescription
+        return true
     }
     
     /// While a permanent lock's settings are fixed, a passage that's due can't be paused, deleted
@@ -48,9 +68,15 @@ class SchedulesViewModel: ObservableObject {
         do {
             async let scheduleData = dataStore.getAllSchedules()
             async let surahData = dataStore.getAllSurahs()
+            async let planData = dataStore.getCurrentPlan()
+            async let lessonData = dataStore.getAllLessons()
+            async let reviewData = dataStore.getAllRecentReviews()
             
             schedules = try await scheduleData
             surahs = try await surahData
+            plan = try await planData
+            lessons = try await lessonData
+            recentReviews = try await reviewData
         } catch {
             self.error = "Failed to load schedules: \(error.localizedDescription)"
         }
@@ -113,5 +139,57 @@ class SchedulesViewModel: ObservableObject {
     
     func updateScheduleFrequency(id: UUID, frequency: Frequency) async {
         await updateSchedule(id: id, frequency: frequency, nextDueDate: nil, isActive: nil)
+    }
+
+    // MARK: - Memorization plan
+
+    func createPlan(_ draft: HifzPlanDraft) async throws {
+        try await dataStore.createPlan(
+            title: draft.title, startPage: draft.startPage, endPage: draft.endPage, halvesPerDay: draft.halvesPerDay,
+            lessonWeekdays: draft.lessonWeekdays, recentReviewCount: draft.recentReviewCount,
+            revisionFrequency: draft.revisionFrequency
+        )
+        await loadData()
+    }
+
+    /// Saves a new pace for the current plan.
+    func savePlan(_ draft: HifzPlanDraft) async throws {
+        guard var plan else { throw DataStoreError.planNotFound }
+        let today = Calendar.current.component(.weekday, from: Date())
+        if HifzPlan.weekdayIsSet(today, in: plan.lessonWeekdays),
+           !HifzPlan.weekdayIsSet(today, in: draft.lessonWeekdays),
+           let hifzToday, isPlanHeldByLock(hifzToday) {
+            throw LockError.planHeld
+        }
+        plan.halvesPerDay = draft.halvesPerDay
+        plan.lessonWeekdays = draft.lessonWeekdays
+        plan.recentReviewCount = draft.recentReviewCount
+        plan.revisionFrequency = draft.revisionFrequency
+        try await dataStore.updatePlan(plan)
+        await loadData()
+    }
+
+    func setPlanActive(_ isActive: Bool) async {
+        guard var plan else { return }
+        guard isActive || !blocksPlanChange() else { return }
+        plan.isActive = isActive
+        do {
+            try await dataStore.updatePlan(plan)
+            await loadData()
+        } catch {
+            self.error = "Failed to update your plan: \(error.localizedDescription)"
+        }
+    }
+
+    /// Ends the plan, moving everything memorized into revision.
+    func endPlan() async {
+        guard let plan, !blocksPlanChange() else { return }
+        do {
+            let moved = try await dataStore.endPlan(id: plan.id)
+            planNotice = moved?.message ?? "\(plan.title) has ended."
+            await loadData()
+        } catch {
+            self.error = "Failed to end your plan: \(error.localizedDescription)"
+        }
     }
 }
